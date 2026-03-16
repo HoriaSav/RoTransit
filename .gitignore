@@ -1,0 +1,13 @@
+transit_app_architecture_full.md
+
+# OTP data
+otp/gtfs/
+otp/osm/
+otp/graph/
+
+# IDE / OS files
+.vscode/
+.idea/
+*.iml
+.DS_Store
+Thumbs.db

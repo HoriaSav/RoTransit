@@ -1,0 +1,13 @@
+{
+    "osm": [
+      {
+        "source": "osm/romania.osm.pbf"
+      }
+    ],
+    "transitFeeds": [
+      {
+        "type": "gtfs",
+        "source": "gtfs/ro-ratbv.zip"
+      }
+    ]
+  }
