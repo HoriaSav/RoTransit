@@ -1,10 +1,14 @@
 services:
-
   otp:
-    image: opentripplanner/opentripplanner
+    build:
+      context: ./otp
+      dockerfile: Dockerfile
     container_name: otp
+    restart: unless-stopped
     volumes:
       - ./otp:/var/opentripplanner
+    environment:
+      JAVA_OPTS: "-Xmx4G"
     command: --build --serve
     ports:
       - "8080:8080"
