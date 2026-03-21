@@ -1,0 +1,6 @@
+{
+  "routingDefaults": {
+    "walkSpeed": 1.33,
+    "numItineraries": 6
+  }
+}
