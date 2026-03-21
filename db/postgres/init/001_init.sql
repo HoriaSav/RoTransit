@@ -1,0 +1,2 @@
+-- Initial PostgreSQL bootstrap script.
+-- Keep this intentionally minimal until the application schema is finalized.

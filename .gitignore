@@ -11,3 +11,6 @@ otp/graph/
 *.iml
 .DS_Store
 Thumbs.db
+
+# Local environment files
+**/.env
