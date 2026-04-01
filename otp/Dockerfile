@@ -1,4 +1,4 @@
-FROM opentripplanner/opentripplanner:latest
+FROM opentripplanner/opentripplanner:2.9.0
 
 WORKDIR /var/opentripplanner
 

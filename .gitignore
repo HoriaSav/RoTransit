@@ -3,7 +3,21 @@ transit_app_architecture_full.md
 # OTP data
 otp/gtfs/
 otp/osm/
-otp/graph/
+otp/graph
+
+# OTP runtime / build artifacts (Docker bind-mount ./otp may write these)
+otp/*.obj
+otp/*.obj.gz
+otp/graphs/
+otp/**/*.log
+otp/tmp/
+otp/temp/
+otp/.cache/
+# Accidental large dataset drops at otp/ root (use ignored gtfs/ and osm/ instead)
+otp/*.pbf
+otp/*.osm
+otp/*.osm.pbf
+otp/*.zip
 
 # IDE / OS files
 .vscode/
