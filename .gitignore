@@ -28,3 +28,6 @@ Thumbs.db
 
 # Local environment files
 **/.env
+
+# Backend build artifacts
+backend/target/

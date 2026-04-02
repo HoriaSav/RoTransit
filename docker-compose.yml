@@ -30,5 +30,24 @@ services:
     ports:
       - "8080:8080"
 
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rotransit-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      otp:
+        condition: service_started
+    environment:
+      PORT: "8085"
+      DB_URL: "jdbc:postgresql://db:5432/rotransit"
+      DB_USER: "admin"
+      DB_PASSWORD: "rotransit_password"
+    ports:
+      - "8085:8085"
+
 volumes:
   rotransit_postgres_data:
