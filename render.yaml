@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: rotransit-backend
+    runtime: docker
+    plan: starter
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 8085
+      - key: DB_URL
+        fromDatabase:
+          name: rotransit-postgres
+          property: connectionString
+      - key: DB_USER
+        fromDatabase:
+          name: rotransit-postgres
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: rotransit-postgres
+          property: password
+
+  - type: pserv
+    name: rotransit-otp
+    runtime: docker
+    plan: starter
+    dockerContext: ./otp
+    dockerfilePath: ./otp/Dockerfile
+    disk:
+      name: otp-data
+      mountPath: /var/opentripplanner
+      sizeGB: 10
+    envVars:
+      - key: JAVA_OPTS
+        value: -Xmx4G
+
+databases:
+  - name: rotransit-postgres
+    plan: starter
