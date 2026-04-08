@@ -4,6 +4,7 @@ import com.rotransit.backend.otp.OtpException;
 import com.rotransit.backend.config.RequestCorrelationFilter;
 import com.rotransit.backend.service.CityNotFoundException;
 import com.rotransit.backend.service.SavedRouteNotFoundException;
+import com.rotransit.backend.service.StopNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import java.time.Instant;
@@ -37,6 +38,17 @@ public class ApiExceptionHandler {
     public ApiErrorResponse handleSavedRouteNotFound(SavedRouteNotFoundException ex, HttpServletRequest request) {
         return error(
                 "SAVED_ROUTE_NOT_FOUND",
+                ex.getMessage(),
+                request,
+                Map.of()
+        );
+    }
+
+    @ExceptionHandler(StopNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ApiErrorResponse handleStopNotFound(StopNotFoundException ex, HttpServletRequest request) {
+        return error(
+                "STOP_NOT_FOUND",
                 ex.getMessage(),
                 request,
                 Map.of()

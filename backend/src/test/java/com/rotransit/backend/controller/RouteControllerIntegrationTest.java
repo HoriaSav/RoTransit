@@ -51,7 +51,7 @@ class RouteControllerIntegrationTest {
                     "itineraries": [
                       {
                         "duration": 1320,
-                        "transfers": 1,
+                        "transfers": 0,
                         "walkDistance": 410.7,
                         "legs": [
                           {
@@ -61,6 +61,30 @@ class RouteControllerIntegrationTest {
                             "startTime": 1000,
                             "endTime": 1200,
                             "distance": 120.5
+                          },
+                          {
+                            "mode": "BUS",
+                            "from": {"name": "Stop A"},
+                            "to": {"name": "Stop B"},
+                            "startTime": 1200,
+                            "endTime": 2000,
+                            "distance": 2000
+                          },
+                          {
+                            "mode": "WALK",
+                            "from": {"name": "Stop B"},
+                            "to": {"name": "Hub"},
+                            "startTime": 2000,
+                            "endTime": 2100,
+                            "distance": 80
+                          },
+                          {
+                            "mode": "TROLLEYBUS",
+                            "from": {"name": "Hub"},
+                            "to": {"name": "End"},
+                            "startTime": 2100,
+                            "endTime": 2800,
+                            "distance": 1500
                           }
                         ]
                       }
@@ -85,8 +109,9 @@ class RouteControllerIntegrationTest {
                 .andExpect(jsonPath("$.routes.length()").value(1))
                 .andExpect(jsonPath("$.routes[0].durationSeconds").value(1320))
                 .andExpect(jsonPath("$.routes[0].transfers").value(1))
-                .andExpect(jsonPath("$.routes[0].estimatedPriceLei").value(0))
-                .andExpect(jsonPath("$.routes[0].legs[0].mode").value("WALK"));
+                .andExpect(jsonPath("$.routes[0].estimatedPriceLei").value(5))
+                .andExpect(jsonPath("$.routes[0].legs[0].mode").value("WALK"))
+                .andExpect(jsonPath("$.routes[0].legs.length()").value(4));
     }
 
     @Test
@@ -161,6 +186,7 @@ class RouteControllerIntegrationTest {
             "DELETE FROM cities",
             "INSERT INTO cities (id, name, country, otp_base_url) VALUES ('99999999-9999-9999-9999-999999999999', 'Brasov', 'Romania', 'http://otp:8080/otp')",
             "INSERT INTO gtfs_stops (city_id, stop_id, stop_name, stop_lat, stop_lon) VALUES ('99999999-9999-9999-9999-999999999999','STOP:1','Rulmentul',45.66,25.62)",
+            "INSERT INTO gtfs_stops (city_id, stop_id, stop_name, stop_lat, stop_lon) VALUES ('99999999-9999-9999-9999-999999999999','STOP:1B','Rulmentul',45.66005,25.62005)",
             "INSERT INTO gtfs_stops (city_id, stop_id, stop_name, stop_lat, stop_lon) VALUES ('99999999-9999-9999-9999-999999999999','STOP:2','Piata Rulmentul',45.65,25.61)",
             "INSERT INTO gtfs_stops (city_id, stop_id, stop_name, stop_lat, stop_lon) VALUES ('99999999-9999-9999-9999-999999999999','STOP:3','Livada Postei',45.64,25.58)"
     })

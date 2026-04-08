@@ -46,8 +46,9 @@ public class TransitCatalogController {
             @PathVariable @NotBlank String routeId,
             @RequestParam UUID cityId,
             @RequestParam @NotBlank String stopId,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate serviceDate
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate serviceDate,
+            @RequestParam(required = false) String directionId
     ) {
-        return routeService.routeStopTimes(cityId, routeId, stopId, serviceDate);
+        return routeService.routeStopTimes(cityId, routeId, stopId, serviceDate, directionId);
     }
 }
