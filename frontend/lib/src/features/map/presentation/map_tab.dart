@@ -90,6 +90,26 @@ Color _legColor(RouteLeg leg) {
   return _stableColorForKey(normalizedMode);
 }
 
+/// Fixed-intensity mode tint for transport line pills (systematic, not per-route).
+Color _transitModePillBackground(String mode, Color surface) {
+  final m = _normalizeMode(mode);
+  final Color tint = switch (m) {
+    'TROLLEYBUS' => const Color(0xFF0D9488),
+    'BUS' => const Color(0xFF2563EB),
+    'TRAM' => const Color(0xFFC2410C),
+    'RAIL' => const Color(0xFF7C3AED),
+    'SUBWAY' => const Color(0xFFDB2777),
+    _ => const Color(0xFF64748B),
+  };
+  return Color.alphaBlend(tint.withValues(alpha: 0.10), surface);
+}
+
+/// Shared geometry and typography for itinerary line pills.
+const double _kPillRadius = 6;
+const EdgeInsets _kPillPadding =
+    EdgeInsets.symmetric(horizontal: 7, vertical: 3);
+const double _kPillLineFontSize = 13;
+
 String _legBadgeLabel(RouteLeg leg) {
   final mode = _modeLabel(leg.mode);
   final lineId = _lineIdFromRouteId(leg.routeId);
@@ -102,6 +122,47 @@ String _legBadgeLabel(RouteLeg leg) {
 List<RouteLeg> _transitLegs(RouteOption option) {
   return option.legs.where(_isTransitLeg).toList();
 }
+
+class _TransitSummaryItem {
+  const _TransitSummaryItem({
+    required this.modeLabel,
+    required this.lineId,
+    required this.modeRaw,
+  });
+
+  final String modeLabel;
+  final String lineId;
+  /// Raw OTP mode for pill tint (trolleybus vs bus, etc.).
+  final String modeRaw;
+}
+
+List<_TransitSummaryItem> _buildTransitSummary(List<RouteLeg> transitLegs) {
+  if (transitLegs.isEmpty) return const [];
+  final items = <_TransitSummaryItem>[];
+  for (final leg in transitLegs) {
+    final modeLabel = _modeLabel(leg.mode);
+    final lineId = _lineIdFromRouteId(leg.routeId);
+    if (items.isNotEmpty &&
+        items.last.modeLabel == modeLabel &&
+        items.last.lineId == lineId) {
+      continue;
+    }
+    items.add(
+      _TransitSummaryItem(
+        modeLabel: modeLabel,
+        lineId: lineId,
+        modeRaw: leg.mode,
+      ),
+    );
+  }
+  return items;
+}
+
+/// Spacing for itinerary cards in [_RouteListPanel].
+const double _kRouteStepRunSpacing = 6;
+const double _kMetaIconTextGap = 6;
+const double _kMetaBulletGap = 8;
+const double _kDurationPriceGap = 10;
 
 class MapTab extends ConsumerStatefulWidget {
   const MapTab({super.key});
@@ -782,6 +843,43 @@ class _CompassFabFace extends StatelessWidget {
   }
 }
 
+class _RouteOptionCard extends StatefulWidget {
+  const _RouteOptionCard({
+    required this.onTap,
+    required this.child,
+  });
+
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  State<_RouteOptionCard> createState() => _RouteOptionCardState();
+}
+
+class _RouteOptionCardState extends State<_RouteOptionCard> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedScale(
+      scale: _pressed ? 0.98 : 1.0,
+      duration: const Duration(milliseconds: 120),
+      curve: Curves.easeOut,
+      child: Card(
+        margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTapDown: (_) => setState(() => _pressed = true),
+          onTapUp: (_) => setState(() => _pressed = false),
+          onTapCancel: () => setState(() => _pressed = false),
+          onTap: widget.onTap,
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+
 class _RouteListPanel extends StatelessWidget {
   const _RouteListPanel({
     required this.onReturnToSearch,
@@ -802,6 +900,14 @@ class _RouteListPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final itemCount = options.isEmpty ? 2 : options.length + 2;
+    final fastestMinutes = options.isEmpty
+        ? 0
+        : options
+            .map((o) => (o.durationSeconds / 60).round())
+            .reduce(math.min);
+    final shortestWalk = options.isEmpty
+        ? 0
+        : options.map((o) => o.walkDistanceMeters).reduce(math.min);
 
     return ListView.builder(
       controller: scrollController,
@@ -809,13 +915,31 @@ class _RouteListPanel extends StatelessWidget {
       itemBuilder: (context, index) {
         if (index == 0) {
           return Padding(
-            padding: const EdgeInsets.fromLTRB(4, 8, 8, 4),
+            padding: const EdgeInsets.fromLTRB(4, 2, 8, 4),
             child: Align(
               alignment: Alignment.centerLeft,
-              child: TextButton.icon(
+              child: TextButton(
                 onPressed: onReturnToSearch,
-                icon: const Icon(Icons.arrow_back_rounded),
-                label: const Text('Return to search'),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF0A3E96),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.arrow_back, size: 20),
+                    SizedBox(width: 4),
+                    Text(
+                      'Return to search',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14.5,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
@@ -848,98 +972,191 @@ class _RouteListPanel extends StatelessWidget {
         final timeFmt = DateFormat('h:mm a');
         final minutes = (item.durationSeconds / 60).round();
         final transitLegs = _transitLegs(item);
+        final transitSummary = _buildTransitSummary(transitLegs);
+        final isFastest = minutes == fastestMinutes;
+        final isShortestWalk = item.walkDistanceMeters == shortestWalk;
+        final hasExtraWalk = item.walkDistanceMeters > shortestWalk;
+        final surface = Theme.of(context).colorScheme.surface;
+        final durationBg = Color.alphaBlend(
+          const Color(0xFF64748B).withValues(alpha: 0.065),
+          surface,
+        );
 
-        return Card(
-          margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => onTapOption(item),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        start == null || end == null
-                            ? '--'
-                            : '${timeFmt.format(start)} - ${timeFmt.format(end)}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
-                        ),
-                      ),
-                      const Spacer(),
-                      Text(
-                        '$minutes min',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  if (transitLegs.isEmpty)
-                    Text(
-                      'Walking route',
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    )
-                  else
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 8,
-                      children: [
-                        for (final leg in transitLegs.take(4))
-                          _LegBadge(leg: leg),
-                        if (transitLegs.length > 4)
+        return _RouteOptionCard(
+          onTap: () => onTapOption(item),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 18, 12, 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                           Text(
-                            '+${transitLegs.length - 4} more',
-                            style: TextStyle(
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              fontWeight: FontWeight.w500,
+                            start == null || end == null
+                                ? '--'
+                                : '${timeFmt.format(start)} - ${timeFmt.format(end)}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 21,
                             ),
                           ),
+                          const SizedBox(height: 7),
+                          if (transitSummary.isEmpty)
+                            Text(
+                              'Walking route',
+                              style: TextStyle(
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                            )
+                          else
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: _kRouteStepRunSpacing,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                for (var i = 0; i < transitSummary.length; i++) ...[
+                                  _TransitStepChip(
+                                    item: transitSummary[i],
+                                    surface: surface,
+                                  ),
+                                  if (i < transitSummary.length - 1)
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 2,
+                                      ),
+                                      child: Text(
+                                        '→',
+                                        style: const TextStyle(
+                                          fontSize: 17,
+                                          fontWeight: FontWeight.w700,
+                                          height: 1,
+                                          color: Colors.black,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ],
+                            ),
+                          const SizedBox(height: 8),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.directions_walk,
+                                size: 16,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(width: _kMetaIconTextGap),
+                              Text(
+                                '${item.walkDistanceMeters} m',
+                                style: TextStyle(
+                                  color: hasExtraWalk
+                                      ? const Color(0xFF8A6D55)
+                                          .withValues(alpha: 0.85)
+                                      : isShortestWalk
+                                          ? const Color(0xFF3E7A59)
+                                              .withValues(alpha: 0.85)
+                                          : Theme.of(
+                                              context,
+                                            ).colorScheme.onSurfaceVariant,
+                                  fontWeight: FontWeight.w400,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: _kMetaBulletGap,
+                                ),
+                                child: Text(
+                                  '•',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    height: 1,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant
+                                        .withValues(alpha: 0.42),
+                                  ),
+                                ),
+                              ),
+                              Icon(
+                                Icons.sync_alt,
+                                size: 16,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(width: _kMetaIconTextGap),
+                              Text(
+                                '${item.transfers} transfer${item.transfers == 1 ? '' : 's'}',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: durationBg,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 2,
+                            ),
+                            child: Text(
+                              '($minutes min)',
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w500,
+                                fontSize: 11.5,
+                                color: isFastest
+                                    ? const Color(0xFF3D7A52)
+                                        .withValues(alpha: 0.88)
+                                    : Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant
+                                        .withValues(alpha: 0.78),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: _kDurationPriceGap),
+                        Text(
+                          '${item.estimatedPriceLei} lei',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                          ),
+                        ),
                       ],
                     ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.directions_walk,
-                        size: 16,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${item.walkDistanceMeters} m',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Icon(
-                        Icons.sync_alt,
-                        size: 16,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${item.transfers} transfers',
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      const Spacer(),
-                      Text(
-                        '${item.estimatedPriceLei} lei',
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+                  ],
+                ),
+              ],
             ),
           ),
         );
@@ -1176,6 +1393,54 @@ class _LegBadge extends StatelessWidget {
             fontWeight: FontWeight.w600,
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _TransitStepChip extends StatelessWidget {
+  const _TransitStepChip({
+    required this.item,
+    required this.surface,
+  });
+
+  final _TransitSummaryItem item;
+  final Color surface;
+
+  @override
+  Widget build(BuildContext context) {
+    final variant = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          item.modeLabel,
+          style: TextStyle(
+            fontWeight: FontWeight.w500,
+            fontSize: 14,
+            color: variant,
+          ),
+        ),
+        if (item.lineId.isNotEmpty) ...[
+          const SizedBox(width: 6),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: _transitModePillBackground(item.modeRaw, surface),
+              borderRadius: BorderRadius.circular(_kPillRadius),
+            ),
+            child: Padding(
+              padding: _kPillPadding,
+              child: Text(
+                item.lineId,
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: _kPillLineFontSize,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
