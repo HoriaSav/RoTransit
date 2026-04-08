@@ -155,8 +155,36 @@ class SavedRouteServiceUnitTest {
                 5,
                 "rule",
                 List.of(
-                        new LegResponse("BUS", "A", "B", 1L, 2L, 100.0),
-                        new LegResponse("WALK", "B", "C", 3L, 4L, 50.0)
+                        new LegResponse(
+                                "BUS",
+                                "",
+                                "A",
+                                0.0,
+                                0.0,
+                                "B",
+                                0.0,
+                                0.0,
+                                1L,
+                                2L,
+                                100.0,
+                                List.of(),
+                                List.of()
+                        ),
+                        new LegResponse(
+                                "WALK",
+                                "",
+                                "B",
+                                0.0,
+                                0.0,
+                                "C",
+                                0.0,
+                                0.0,
+                                3L,
+                                4L,
+                                50.0,
+                                List.of(),
+                                List.of()
+                        )
                 )
         );
         RouteSearchResponse searchResponse = new RouteSearchResponse(cityId, "Brasov", 0, 30, 1, List.of(option));
