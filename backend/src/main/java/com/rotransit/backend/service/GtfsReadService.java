@@ -8,6 +8,7 @@ import jakarta.annotation.PostConstruct;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -124,7 +125,7 @@ public class GtfsReadService {
                 SELECT route_id, COALESCE(route_short_name, '') AS route_short_name,
                        COALESCE(route_long_name, '') AS route_long_name, route_type
                 FROM gtfs_routes
-                WHERE city_id = ? AND route_type = 3
+                WHERE city_id = ? AND route_type IN (3, 11, 700, 800)
                 ORDER BY route_short_name, route_long_name
                 """;
         return jdbcTemplate.query(
@@ -182,7 +183,8 @@ public class GtfsReadService {
             UUID cityId,
             String routeId,
             String stopId,
-            LocalDate serviceDate
+            LocalDate serviceDate,
+            String directionId
     ) {
         String weekdayColumn = switch (serviceDate.getDayOfWeek()) {
             case MONDAY -> "monday";
@@ -203,6 +205,7 @@ public class GtfsReadService {
                   AND t.route_id = ?
                   AND st.stop_id = ?
                   AND st.departure_time IS NOT NULL
+                  AND (? IS NULL OR ? = '' OR COALESCE(t.direction_id, '') = ?)
                   AND (
                     (
                       EXISTS (
@@ -233,7 +236,6 @@ public class GtfsReadService {
                     )
                   )
                 ORDER BY st.departure_time ASC
-                LIMIT 100
                 """.formatted(weekdayColumn);
         return jdbcTemplate.query(
                 sql,
@@ -245,6 +247,9 @@ public class GtfsReadService {
                 cityId,
                 routeId,
                 stopId,
+                directionId,
+                directionId,
+                directionId,
                 serviceDateKey,
                 serviceDateKey,
                 serviceDateKey,
@@ -259,5 +264,57 @@ public class GtfsReadService {
             case 2 -> "RAIL";
             default -> "BUS";
         };
+    }
+
+    /**
+     * All GTFS stops in the city whose normalized name equals {@code normalizedName}
+     * (same rules as {@link StopSuggestionMerge#normalizeName(String)}).
+     */
+    public List<NearbyStopResponse> findStopsByNormalizedName(UUID cityId, String normalizedName) {
+        if (normalizedName == null || normalizedName.isBlank()) {
+            return List.of();
+        }
+        String likePattern = likePatternForNormalizedStopName(normalizedName);
+        String sql = """
+                SELECT stop_id, stop_name, stop_lat, stop_lon
+                FROM gtfs_stops
+                WHERE city_id = ?
+                  AND LOWER(stop_name) LIKE ?
+                """;
+        List<NearbyStopResponse> rows = jdbcTemplate.query(
+                sql,
+                (rs, rowNum) -> new NearbyStopResponse(
+                        rs.getString("stop_id"),
+                        rs.getString("stop_name"),
+                        rs.getDouble("stop_lat"),
+                        rs.getDouble("stop_lon")
+                ),
+                cityId,
+                likePattern.toLowerCase(Locale.ROOT));
+        return rows.stream()
+                .filter(r -> normalizedName.equals(StopSuggestionMerge.normalizeName(r.name())))
+                .toList();
+    }
+
+    /**
+     * Cheap SQL prefilter: tokens of the normalized name as substrings in order (e.g. {@code %piata%doina%}).
+     * Exact match is still enforced in Java.
+     */
+    private static String likePatternForNormalizedStopName(String normalizedName) {
+        String[] tokens = normalizedName.split(" ");
+        StringBuilder sb = new StringBuilder("%");
+        boolean first = true;
+        for (String t : tokens) {
+            if (t.isEmpty()) {
+                continue;
+            }
+            if (!first) {
+                sb.append('%');
+            }
+            sb.append(t);
+            first = false;
+        }
+        sb.append('%');
+        return sb.toString();
     }
 }
