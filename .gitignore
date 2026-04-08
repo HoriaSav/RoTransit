@@ -28,3 +28,12 @@ Thumbs.db
 
 # Local environment files
 **/.env
+
+# Backend build outputs
+backend/target/
+
+# Frontend generated/build outputs
+frontend/.dart_tool/
+frontend/build/
+frontend/android/.gradle/
+frontend/.idea/
