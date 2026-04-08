@@ -65,8 +65,31 @@ public class RouteController {
     public List<NearbyStopResponse> searchStops(
             @RequestParam UUID cityId,
             @RequestParam @NotBlank String q,
-            @RequestParam(defaultValue = "10") @Min(1) @Max(20) int limit
+            @RequestParam(defaultValue = "10") @Min(1) @Max(20) int limit,
+            @RequestParam(required = false) @Min(-90) @Max(90) Double refLat,
+            @RequestParam(required = false) @Min(-180) @Max(180) Double refLon
     ) {
-        return routeService.searchStops(cityId, q, limit);
+        Double lat = null;
+        Double lon = null;
+        if (refLat != null && refLon != null) {
+            lat = refLat;
+            lon = refLon;
+        }
+        return routeService.searchStops(cityId, q, limit, lat, lon);
+    }
+
+    /**
+     * Picks the concrete GTFS stop for a rider-facing name by comparing OTP itineraries from {@code origin}
+     * (fewer transfers, then shorter trip time, then less walking).
+     */
+    @GetMapping("/stops/resolve-for-route")
+    public NearbyStopResponse resolveStopForRoute(
+            @RequestParam UUID cityId,
+            @RequestParam @NotBlank String origin,
+            @RequestParam @NotBlank String stopName,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate serviceDate,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime serviceTime
+    ) {
+        return routeService.resolveDestinationStopForRoute(cityId, origin, stopName, serviceDate, serviceTime);
     }
 }
