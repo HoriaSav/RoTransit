@@ -228,7 +228,50 @@ public class OtpHttpClient implements OtpClient {
     }
 
     private JsonNode graphQlPlanSearch(String otpBaseUrl, RouteSearchQuery query) {
-        String graphQlQuery = """
+        String detailedQuery = """
+                query Plan($fromLat: Float!, $fromLon: Float!, $toLat: Float!, $toLon: Float!, $date: String!, $time: String!, $num: Int!) {
+                  plan(
+                    from: {lat: $fromLat, lon: $fromLon}
+                    to: {lat: $toLat, lon: $toLon}
+                    date: $date
+                    time: $time
+                    numItineraries: $num
+                  ) {
+                    itineraries {
+                      duration
+                      walkDistance
+                      legs {
+                        mode
+                        route {
+                          gtfsId
+                        }
+                        distance
+                        startTime
+                        endTime
+                        from {
+                          name
+                          lat
+                          lon
+                        }
+                        to {
+                          name
+                          lat
+                          lon
+                        }
+                        legGeometry {
+                          points
+                        }
+                        intermediateStops {
+                          name
+                          lat
+                          lon
+                        }
+                      }
+                    }
+                  }
+                }
+                """;
+        String basicQuery = """
                 query Plan($fromLat: Float!, $fromLon: Float!, $toLat: Float!, $toLon: Float!, $date: String!, $time: String!, $num: Int!) {
                   plan(
                     from: {lat: $fromLat, lon: $fromLon}
@@ -245,8 +288,16 @@ public class OtpHttpClient implements OtpClient {
                         distance
                         startTime
                         endTime
-                        from { name }
-                        to { name }
+                        from {
+                          name
+                          lat
+                          lon
+                        }
+                        to {
+                          name
+                          lat
+                          lon
+                        }
                       }
                     }
                   }
@@ -264,8 +315,14 @@ public class OtpHttpClient implements OtpClient {
         variables.put("time", query.serviceTime().toString());
         variables.put("num", query.itineraryCount());
 
-        JsonNode response = postGraphQl(otpBaseUrl, graphQlQuery, variables);
+        JsonNode response = postGraphQl(otpBaseUrl, detailedQuery, variables);
         JsonNode dataPlan = response.path("data").path("plan");
+        boolean noDetailedItineraries = !dataPlan.path("itineraries").isArray()
+                || dataPlan.path("itineraries").isEmpty();
+        if (dataPlan.isMissingNode() || dataPlan.isNull() || noDetailedItineraries) {
+            response = postGraphQl(otpBaseUrl, basicQuery, variables);
+            dataPlan = response.path("data").path("plan");
+        }
         if (dataPlan.isMissingNode() || dataPlan.isNull()) {
             throw new OtpException("OTP GraphQL plan query returned no plan payload", null);
         }
@@ -331,6 +388,10 @@ public class OtpHttpClient implements OtpClient {
                     ResponseEntity<JsonNode> response = otpRestTemplate.postForEntity(url, body, JsonNode.class);
                     JsonNode payload = response.getBody();
                     if (payload != null && payload.path("errors").isArray() && payload.path("errors").size() > 0) {
+                        JsonNode maybePlan = payload.path("data").path("plan");
+                        if (!(maybePlan.isMissingNode() || maybePlan.isNull())) {
+                            return payload;
+                        }
                         continue;
                     }
                     if (payload != null) {

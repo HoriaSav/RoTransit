@@ -82,6 +82,27 @@ class GtfsReadServiceJdbcTest {
     }
 
     @Test
+    void findStopsByNormalizedNameReturnsAllMatchingPlatforms() {
+        UUID cityId = UUID.randomUUID();
+        jdbcTemplate.update(
+                "INSERT INTO gtfs_stops (city_id, stop_id, stop_name, stop_lat, stop_lon) VALUES (?, ?, ?, ?, ?)",
+                cityId, "1", "Doina", 45.0, 25.0
+        );
+        jdbcTemplate.update(
+                "INSERT INTO gtfs_stops (city_id, stop_id, stop_name, stop_lat, stop_lon) VALUES (?, ?, ?, ?, ?)",
+                cityId, "2", "  DOINA ", 45.1, 25.1
+        );
+        jdbcTemplate.update(
+                "INSERT INTO gtfs_stops (city_id, stop_id, stop_name, stop_lat, stop_lon) VALUES (?, ?, ?, ?, ?)",
+                cityId, "3", "Piata Doina", 45.2, 25.2
+        );
+
+        var out = gtfsReadService.findStopsByNormalizedName(cityId, "doina");
+
+        assertEquals(2, out.size());
+    }
+
+    @Test
     void listBusLinesReturnsOnlyRouteType3AndMapsMode() {
         UUID cityId = UUID.randomUUID();
         jdbcTemplate.update(
@@ -127,10 +148,53 @@ class GtfsReadServiceJdbcTest {
         );
 
         List<com.rotransit.backend.dto.StopTimetableEntryResponse> result =
-                gtfsReadService.routeStopTimes(cityId, routeId, stopId, mondayDate);
+                gtfsReadService.routeStopTimes(cityId, routeId, stopId, mondayDate, "0");
 
         assertEquals(1, result.size());
         assertEquals(tripId, result.get(0).tripId());
         assertEquals("08:05:00", result.get(0).departureTime());
+    }
+
+    @Test
+    void routeStopTimesReturnsMoreThanOneHundredRowsWhenPresent() {
+        UUID cityId = UUID.randomUUID();
+        String serviceId = "weekday-service-many";
+        String routeId = "R8";
+        String stopId = "S8";
+        LocalDate mondayDate = LocalDate.of(2026, 4, 6);
+
+        jdbcTemplate.update(
+                """
+                INSERT INTO gtfs_calendar (
+                    city_id, service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                cityId, serviceId, 1, 0, 0, 0, 0, 0, 0, "20260401", "20260430"
+        );
+
+        for (int i = 0; i < 108; i++) {
+            String tripId = "T8-" + i;
+            int hour = i / 4; // 4 departures per hour
+            int minute = (i % 4) * 15;
+            String hh = String.format("%02d", hour);
+            String mm = String.format("%02d", minute);
+            String dep = hh + ":" + mm + ":00";
+
+            jdbcTemplate.update(
+                    "INSERT INTO gtfs_trips (city_id, trip_id, route_id, service_id, trip_headsign, direction_id) VALUES (?, ?, ?, ?, ?, ?)",
+                    cityId, tripId, routeId, serviceId, "Terminal", "0"
+            );
+            jdbcTemplate.update(
+                    "INSERT INTO gtfs_stop_times (city_id, trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES (?, ?, ?, ?, ?, ?)",
+                    cityId, tripId, stopId, 1, dep, dep
+            );
+        }
+
+        List<com.rotransit.backend.dto.StopTimetableEntryResponse> result =
+                gtfsReadService.routeStopTimes(cityId, routeId, stopId, mondayDate, "0");
+
+        assertEquals(108, result.size());
+        assertEquals("00:00:00", result.get(0).departureTime());
+        assertEquals("26:45:00", result.get(107).departureTime());
     }
 }
