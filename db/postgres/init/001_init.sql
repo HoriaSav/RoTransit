@@ -91,12 +91,23 @@ CREATE INDEX IF NOT EXISTS idx_favorite_stops_user_city
 --------------------------------------------------
 -- SEED DATA
 --------------------------------------------------
-INSERT INTO cities (name, country, otp_base_url)
-VALUES ('Brasov', 'Romania', 'http://otp:8080/otp')
+-- Fixed UUIDs so app clients (and imports) can use stable cityId across fresh Docker volumes.
+INSERT INTO cities (id, name, country, otp_base_url)
+VALUES (
+    '93715d42-5523-4195-8743-53b6819488c9'::uuid,
+    'Brasov',
+    'Romania',
+    'http://otp:8080/otp'
+)
 ON CONFLICT (name, country) DO NOTHING;
 
-INSERT INTO cities (name, country, otp_base_url)
-VALUES ('Bucharest', 'Romania', 'http://otp:8080/otp')
+INSERT INTO cities (id, name, country, otp_base_url)
+VALUES (
+    'a1b2c3d4-e5f6-4789-a012-3456789abcde'::uuid,
+    'Bucharest',
+    'Romania',
+    'http://otp:8080/otp'
+)
 ON CONFLICT (name, country) DO NOTHING;
 
 --------------------------------------------------
