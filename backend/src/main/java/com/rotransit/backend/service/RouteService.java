@@ -6,6 +6,7 @@ import com.rotransit.backend.dto.LegPointResponse;
 import com.rotransit.backend.dto.LegStopResponse;
 import com.rotransit.backend.dto.NearbyStopResponse;
 import com.rotransit.backend.dto.BusLineResponse;
+import com.rotransit.backend.dto.OfflinePackMetaResponse;
 import com.rotransit.backend.dto.OfflinePackResponse;
 import com.rotransit.backend.dto.OfflinePackRouteStopsResponse;
 import com.rotransit.backend.dto.OfflinePackTimetableEntryResponse;
@@ -17,6 +18,9 @@ import com.rotransit.backend.dto.StopTimetableResponse;
 import com.rotransit.backend.model.City;
 import com.rotransit.backend.otp.OtpClient;
 import com.rotransit.backend.repository.CityRepository;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -24,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
+import java.util.HexFormat;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -317,19 +322,74 @@ public class RouteService {
         );
     }
 
+    public OfflinePackMetaResponse buildOfflinePackMeta(UUID cityId, LocalDate anchorMonday) {
+        OfflinePackMaterialized m = materializeOfflinePack(cityId, anchorMonday, false);
+        return new OfflinePackMetaResponse(
+                m.cityIdStr(),
+                m.anchorStr(),
+                m.packVersion(),
+                m.generatedAt());
+    }
+
     /**
      * Builds a single JSON document for mobile offline mode: all bus lines, per-direction stops,
      * and Mon/Sat/Sun timetable slices (aligned with the app's week anchor Monday).
      */
     public OfflinePackResponse buildOfflinePack(UUID cityId, LocalDate anchorMonday) {
+        OfflinePackMaterialized m = materializeOfflinePack(cityId, anchorMonday, true);
+        log.info("buildOfflinePack cityId={} buses={} routeStopSlices={} timetableSlices={} anchorMonday={}",
+                cityId, m.buses().size(), m.routeStopsOut().size(), m.timetablesOut().size(), anchorMonday);
+        return new OfflinePackResponse(
+                m.cityIdStr(),
+                m.anchorStr(),
+                m.generatedAt(),
+                m.packVersion(),
+                m.buses(),
+                m.routeStopsOut(),
+                m.timetablesOut()
+        );
+    }
+
+    private record OfflinePackMaterialized(
+            String cityIdStr,
+            String anchorStr,
+            String generatedAt,
+            String packVersion,
+            List<BusLineResponse> buses,
+            List<OfflinePackRouteStopsResponse> routeStopsOut,
+            List<OfflinePackTimetableEntryResponse> timetablesOut
+    ) {
+    }
+
+    private OfflinePackMaterialized materializeOfflinePack(
+            UUID cityId,
+            LocalDate anchorMonday,
+            boolean includePayloadLists
+    ) {
         cityRepository.findById(cityId).orElseThrow(() -> new CityNotFoundException(cityId));
+        Instant generatedAt = Instant.now();
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+        feedUtf8(digest, cityId.toString());
+        digest.update((byte) '|');
+        feedUtf8(digest, anchorMonday.toString());
+        digest.update((byte) '|');
+
         LocalDate saturday = anchorMonday.plusDays(5);
         LocalDate sunday = anchorMonday.plusDays(6);
-        Instant generatedAt = Instant.now();
 
         List<BusLineResponse> buses = gtfsReadService.listBusLines(cityId);
-        List<OfflinePackRouteStopsResponse> routeStopsOut = new ArrayList<>();
-        List<OfflinePackTimetableEntryResponse> timetablesOut = new ArrayList<>();
+        feedUtf8(digest, String.valueOf(buses.size()));
+        digest.update((byte) '|');
+
+        List<OfflinePackRouteStopsResponse> routeStopsOut =
+                includePayloadLists ? new ArrayList<>() : List.of();
+        List<OfflinePackTimetableEntryResponse> timetablesOut =
+                includePayloadLists ? new ArrayList<>() : List.of();
 
         record DaySlice(LocalDate date, String dayKind) {}
         List<DaySlice> daySlices = List.of(
@@ -341,41 +401,76 @@ public class RouteService {
         String[] directions = {"0", "1"};
         for (BusLineResponse line : buses) {
             String routeId = line.routeId();
+            feedUtf8(digest, routeId);
+            digest.update((byte) '|');
             for (String directionId : directions) {
                 List<RouteStopResponse> stops = gtfsReadService.routeStops(cityId, routeId, directionId);
                 if (stops.isEmpty()) {
                     continue;
                 }
-                routeStopsOut.add(new OfflinePackRouteStopsResponse(routeId, directionId, stops));
+                feedUtf8(digest, directionId);
+                digest.update((byte) '|');
+                for (RouteStopResponse stop : stops) {
+                    feedUtf8(digest, stop.stopId());
+                    digest.update((byte) ',');
+                }
+                digest.update((byte) '|');
+
+                if (includePayloadLists) {
+                    routeStopsOut.add(new OfflinePackRouteStopsResponse(routeId, directionId, stops));
+                }
                 for (RouteStopResponse stop : stops) {
                     for (DaySlice day : daySlices) {
                         List<StopTimetableEntryResponse> departures = gtfsReadService.routeStopTimes(
                                 cityId, routeId, stop.stopId(), day.date(), directionId);
-                        StopTimetableResponse tt = new StopTimetableResponse(
-                                cityId.toString(),
-                                routeId,
-                                stop.stopId(),
-                                day.date().toString(),
-                                departures
-                        );
-                        timetablesOut.add(new OfflinePackTimetableEntryResponse(
-                                routeId, stop.stopId(), directionId, day.dayKind(), tt));
+                        feedUtf8(digest, routeId);
+                        digest.update((byte) 0);
+                        feedUtf8(digest, directionId);
+                        digest.update((byte) 0);
+                        feedUtf8(digest, stop.stopId());
+                        digest.update((byte) 0);
+                        feedUtf8(digest, day.dayKind());
+                        digest.update((byte) 0);
+                        for (StopTimetableEntryResponse d : departures) {
+                            feedUtf8(digest, d.tripId());
+                            digest.update((byte) 0);
+                            feedUtf8(digest, d.departureTime());
+                            digest.update((byte) 0);
+                            feedUtf8(digest, d.headsign() != null ? d.headsign() : "");
+                            digest.update((byte) ';');
+                        }
+                        digest.update((byte) '#');
+
+                        if (includePayloadLists) {
+                            StopTimetableResponse tt = new StopTimetableResponse(
+                                    cityId.toString(),
+                                    routeId,
+                                    stop.stopId(),
+                                    day.date().toString(),
+                                    departures
+                            );
+                            timetablesOut.add(new OfflinePackTimetableEntryResponse(
+                                    routeId, stop.stopId(), directionId, day.dayKind(), tt));
+                        }
                     }
                 }
             }
         }
 
-        log.info("buildOfflinePack cityId={} buses={} routeStopSlices={} timetableSlices={} anchorMonday={}",
-                cityId, buses.size(), routeStopsOut.size(), timetablesOut.size(), anchorMonday);
-
-        return new OfflinePackResponse(
+        String packVersion = HexFormat.of().formatHex(digest.digest());
+        return new OfflinePackMaterialized(
                 cityId.toString(),
                 anchorMonday.toString(),
                 generatedAt.toString(),
+                packVersion,
                 buses,
                 routeStopsOut,
                 timetablesOut
         );
+    }
+
+    private static void feedUtf8(MessageDigest digest, String s) {
+        digest.update(s.getBytes(StandardCharsets.UTF_8));
     }
 
     public List<NearbyStopResponse> nearbyStops(UUID cityId, double latitude, double longitude, int radiusMeters) {

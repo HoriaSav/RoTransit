@@ -1,9 +1,12 @@
 package com.rotransit.backend.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -19,6 +22,9 @@ class TransitCatalogControllerIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Test
     @Sql(statements = {
@@ -158,11 +164,52 @@ class TransitCatalogControllerIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.cityId").value("efefefef-efef-efef-efef-efefefefefef"))
                 .andExpect(jsonPath("$.anchorMonday").value("2026-04-06"))
+                .andExpect(jsonPath("$.packVersion").isString())
                 .andExpect(jsonPath("$.buses.length()").value(1))
                 .andExpect(jsonPath("$.routeStops.length()").value(1))
                 .andExpect(jsonPath("$.routeStops[0].directionId").value("0"))
                 .andExpect(jsonPath("$.timetables.length()").value(3))
                 .andExpect(jsonPath("$.timetables[0].dayKind").value("MONFRI"))
                 .andExpect(jsonPath("$.timetables[0].timetable.departures.length()").value(2));
+    }
+
+    @Test
+    @Sql(statements = {
+            "DELETE FROM saved_routes",
+            "DELETE FROM users",
+            "DELETE FROM gtfs_calendar_dates",
+            "DELETE FROM gtfs_calendar",
+            "DELETE FROM gtfs_stop_times",
+            "DELETE FROM gtfs_trips",
+            "DELETE FROM gtfs_routes",
+            "DELETE FROM gtfs_stops",
+            "DELETE FROM cities",
+            "INSERT INTO cities (id, name, country, otp_base_url) VALUES ('efefefef-efef-efef-efef-efefefefefef', 'Brasov', 'Romania', 'http://otp:8080/otp')",
+            "INSERT INTO gtfs_stops (city_id, stop_id, stop_name, stop_lat, stop_lon) VALUES ('efefefef-efef-efef-efef-efefefefefef','STOP:1','First',45.61,25.60)",
+            "INSERT INTO gtfs_routes (city_id, route_id, route_short_name, route_long_name, route_type) VALUES ('efefefef-efef-efef-efef-efefefefefef','ROUTE:1','1','Route 1',3)",
+            "INSERT INTO gtfs_trips (city_id, trip_id, route_id, service_id, trip_headsign, direction_id) VALUES ('efefefef-efef-efef-efef-efefefefefef','TRIP:1','ROUTE:1','WEEK','Center','0')",
+            "INSERT INTO gtfs_trips (city_id, trip_id, route_id, service_id, trip_headsign, direction_id) VALUES ('efefefef-efef-efef-efef-efefefefefef','TRIP:2','ROUTE:1','WEEK','Center','0')",
+            "INSERT INTO gtfs_calendar (city_id, service_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday, start_date, end_date) VALUES ('efefefef-efef-efef-efef-efefefefefef','WEEK',1,1,1,1,1,0,0,'20260401','20260430')",
+            "INSERT INTO gtfs_stop_times (city_id, trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('efefefef-efef-efef-efef-efefefefefef','TRIP:1','STOP:1',1,'08:10:00','08:10:00')",
+            "INSERT INTO gtfs_stop_times (city_id, trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('efefefef-efef-efef-efef-efefefefefef','TRIP:2','STOP:1',1,'08:25:00','08:25:00')"
+    })
+    void offlinePackMetaMatchesFullPackPackVersion() throws Exception {
+        var metaResult = mockMvc.perform(get("/api/buses/offline-pack-meta")
+                        .queryParam("cityId", "efefefef-efef-efef-efef-efefefefefef")
+                        .queryParam("anchorMonday", "2026-04-06"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cityId").value("efefefef-efef-efef-efef-efefefefefef"))
+                .andExpect(jsonPath("$.anchorMonday").value("2026-04-06"))
+                .andExpect(jsonPath("$.packVersion").isString())
+                .andReturn();
+        JsonNode metaRoot = objectMapper.readTree(metaResult.getResponse().getContentAsString());
+        String packVersion = metaRoot.path("packVersion").asText();
+        assertThat(packVersion).isNotBlank();
+
+        mockMvc.perform(get("/api/buses/offline-pack")
+                        .queryParam("cityId", "efefefef-efef-efef-efef-efefefefefef")
+                        .queryParam("anchorMonday", "2026-04-06"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.packVersion").value(packVersion));
     }
 }
