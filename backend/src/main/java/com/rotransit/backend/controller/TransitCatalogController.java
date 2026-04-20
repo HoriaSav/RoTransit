@@ -1,6 +1,7 @@
 package com.rotransit.backend.controller;
 
 import com.rotransit.backend.dto.BusLineResponse;
+import com.rotransit.backend.dto.OfflinePackResponse;
 import com.rotransit.backend.dto.RouteStopResponse;
 import com.rotransit.backend.dto.StopTimetableResponse;
 import com.rotransit.backend.service.RouteService;
@@ -30,6 +31,14 @@ public class TransitCatalogController {
     @GetMapping
     public List<BusLineResponse> listBuses(@RequestParam UUID cityId) {
         return routeService.listBusLines(cityId);
+    }
+
+    @GetMapping("/offline-pack")
+    public OfflinePackResponse offlinePack(
+            @RequestParam UUID cityId,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate anchorMonday
+    ) {
+        return routeService.buildOfflinePack(cityId, anchorMonday);
     }
 
     @GetMapping("/{routeId}/stops")

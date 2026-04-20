@@ -30,6 +30,28 @@ services:
     ports:
       - "8080:8080"
 
+  gtfs-import:
+    build:
+      context: ./scripts/db
+      dockerfile: Dockerfile.gtfs-import
+    container_name: rotransit-gtfs-import
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_URL: postgresql://admin:rotransit_password@db:5432/rotransit
+      GTFS_IMPORT_IF_EMPTY: "1"
+    volumes:
+      - ./otp/gtfs:/gtfs:ro
+    command:
+      - "--gtfs"
+      - "/gtfs/ro-ratbv.zip"
+      - "--city-name"
+      - "Brasov"
+      - "--country"
+      - "Romania"
+
   app:
     build:
       context: ./backend
@@ -41,6 +63,8 @@ services:
         condition: service_healthy
       otp:
         condition: service_started
+      gtfs-import:
+        condition: service_completed_successfully
     environment:
       PORT: "8085"
       DB_URL: "jdbc:postgresql://db:5432/rotransit"

@@ -17,6 +17,11 @@ import org.springframework.web.util.UriComponentsBuilder;
 @Component
 public class OtpHttpClient implements OtpClient {
 
+    /** Prefer transit over long walks; OTP may return no path if only a >1 km walk exists. */
+    private static final int STRICT_MAX_WALK_METERS = 1000;
+    private static final double STRICT_WALK_RELUCTANCE = 5.0;
+    private static final double STRICT_WAIT_RELUCTANCE = 0.85;
+
     private final RestTemplate otpRestTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -26,40 +31,75 @@ public class OtpHttpClient implements OtpClient {
 
     @Override
     public JsonNode searchRoutes(String otpBaseUrl, RouteSearchQuery query) {
+        JsonNode strictRest = searchRoutesRest(otpBaseUrl, query, true);
+        if (planHasItineraries(strictRest)) {
+            return strictRest;
+        }
+        JsonNode relaxedRest = searchRoutesRest(otpBaseUrl, query, false);
+        if (planHasItineraries(relaxedRest)) {
+            return relaxedRest;
+        }
+        // OTP 2.9+ fallback: GraphQL gtfs API (uses router-config defaults)
+        try {
+            JsonNode graphQlPlan = graphQlPlanSearch(otpBaseUrl, query);
+            if (graphQlPlan != null && planHasItineraries(graphQlPlan)) {
+                return graphQlPlan;
+            }
+        } catch (OtpException ignored) {
+            // fall through to empty plan or last REST body
+        }
+
+        // Prefer any non-empty REST body from relaxed pass for debugging; else empty plan.
+        if (relaxedRest != null && !relaxedRest.path("plan").isMissingNode()) {
+            return relaxedRest;
+        }
+        if (strictRest != null && !strictRest.path("plan").isMissingNode()) {
+            return strictRest;
+        }
+        ObjectNode empty = objectMapper.createObjectNode();
+        empty.set("plan", objectMapper.createObjectNode().set("itineraries", objectMapper.createArrayNode()));
+        return empty;
+    }
+
+    private JsonNode searchRoutesRest(String otpBaseUrl, RouteSearchQuery query, boolean strictWalk) {
         Set<String> baseCandidates = baseCandidates(otpBaseUrl);
         List<String> pathCandidates = List.of("/plan", "/routers/default/plan", "/otp/plan", "/otp/routers/default/plan");
-        OtpException lastError = null;
+        JsonNode lastBody = null;
         for (String base : baseCandidates) {
             for (String path : pathCandidates) {
-                String url = UriComponentsBuilder.fromHttpUrl(base + path)
+                UriComponentsBuilder builder = UriComponentsBuilder.fromHttpUrl(base + path)
                         .queryParam("fromPlace", query.origin())
                         .queryParam("toPlace", query.destination())
                         .queryParam("numItineraries", query.itineraryCount())
                         .queryParam("date", query.serviceDate())
                         .queryParam("time", query.serviceTime())
-                        .queryParam("locale", "en")
-                        .toUriString();
+                        .queryParam("locale", "en");
+                if (strictWalk) {
+                    builder.queryParam("maxWalkDistance", STRICT_MAX_WALK_METERS);
+                    builder.queryParam("walkReluctance", STRICT_WALK_RELUCTANCE);
+                    builder.queryParam("waitReluctance", STRICT_WAIT_RELUCTANCE);
+                }
+                String url = builder.toUriString();
                 try {
-                    return getJson(url);
-                } catch (OtpException ex) {
-                    lastError = ex;
+                    JsonNode body = getJson(url);
+                    lastBody = body;
+                    if (planHasItineraries(body)) {
+                        return body;
+                    }
+                } catch (OtpException ignored) {
+                    // try next endpoint
                 }
             }
         }
-        // OTP 2.9+ fallback: GraphQL gtfs API
-        try {
-            JsonNode graphQlPlan = graphQlPlanSearch(otpBaseUrl, query);
-            if (graphQlPlan != null) {
-                return graphQlPlan;
-            }
-        } catch (OtpException ex) {
-            lastError = ex;
-        }
+        return lastBody;
+    }
 
-        // Final graceful fallback: return empty itineraries instead of propagating 502.
-        ObjectNode empty = objectMapper.createObjectNode();
-        empty.set("plan", objectMapper.createObjectNode().set("itineraries", objectMapper.createArrayNode()));
-        return empty;
+    private static boolean planHasItineraries(JsonNode root) {
+        if (root == null || root.isNull()) {
+            return false;
+        }
+        JsonNode itineraries = root.path("plan").path("itineraries");
+        return itineraries.isArray() && itineraries.size() > 0;
     }
 
     @Override

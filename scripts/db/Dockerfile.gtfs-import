@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir "psycopg[binary]>=3.1"
+
+COPY import_gtfs_to_db.py .
+
+ENV PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python", "/app/import_gtfs_to_db.py"]

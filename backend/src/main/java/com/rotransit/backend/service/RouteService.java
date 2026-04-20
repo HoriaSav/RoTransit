@@ -6,6 +6,9 @@ import com.rotransit.backend.dto.LegPointResponse;
 import com.rotransit.backend.dto.LegStopResponse;
 import com.rotransit.backend.dto.NearbyStopResponse;
 import com.rotransit.backend.dto.BusLineResponse;
+import com.rotransit.backend.dto.OfflinePackResponse;
+import com.rotransit.backend.dto.OfflinePackRouteStopsResponse;
+import com.rotransit.backend.dto.OfflinePackTimetableEntryResponse;
 import com.rotransit.backend.dto.RouteOptionResponse;
 import com.rotransit.backend.dto.RouteStopResponse;
 import com.rotransit.backend.dto.RouteSearchResponse;
@@ -16,14 +19,19 @@ import com.rotransit.backend.otp.OtpClient;
 import com.rotransit.backend.repository.CityRepository;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.stream.Collectors;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,6 +41,20 @@ import org.springframework.stereotype.Service;
 @Service
 public class RouteService {
     private static final Logger log = LoggerFactory.getLogger(RouteService.class);
+
+    /** Max walking (meters): drop walk-only itineraries above this; drop transit itineraries with any WALK leg above this. */
+    private static final double MAX_WALK_LEG_METERS_WHEN_TRANSIT = 1000.0;
+
+    /** Step between OTP plan requests while scanning the rest of the service calendar day. */
+    private static final int ROUTE_SEARCH_SHIFT_STEP_MINUTES = 15;
+
+    /**
+     * Hard cap on OTP plan calls per user search (full-day scan can be long; protects OTP and timeouts).
+     */
+    private static final int MAX_OTP_PLAN_CALLS_PER_SEARCH = 256;
+
+    /** Max distinct itineraries returned (payload / UI bounds). */
+    private static final int ROUTE_SEARCH_MERGED_CAP = 400;
 
     private static final int MAX_AMBIGUOUS_DESTINATION_CANDIDATES = 12;
     /** One itinerary is enough: OTP returns the best option first. */
@@ -63,36 +85,202 @@ public class RouteService {
         log.info("searchRoutes cityId={} origin={} destination={} offset={} limit={}",
                 cityId, query.origin(), query.destination(), offset, limit);
 
-        JsonNode response = otpClient.searchRoutes(city.getOtpBaseUrl(), query);
-        List<RouteOptionResponse> routes = new ArrayList<>();
-        JsonNode itineraries = response.path("plan").path("itineraries");
-        if (itineraries.isArray()) {
-            for (JsonNode itinerary : itineraries) {
-                JsonNode legsNode = itinerary.path("legs");
-                routes.add(new RouteOptionResponse(
-                        itinerary.path("duration").asLong(0),
-                        countTransfersFromLegs(legsNode),
-                        Math.round(itinerary.path("walkDistance").asDouble(0)),
-                        estimatePriceLei(legsNode),
-                        "5 lei / 90 min from first transit boarding",
-                        toLegs(legsNode)
-                ));
-            }
-        }
-        int safeOffset = Math.max(offset, 0);
         int safeLimit = Math.max(limit, 1);
-        int toIndex = Math.min(safeOffset + safeLimit, routes.size());
-        List<RouteOptionResponse> paged = safeOffset >= routes.size()
-                ? List.of()
-                : routes.subList(safeOffset, toIndex);
+        List<RouteOptionResponse> routes =
+                mergeRoutesFromShiftedDepartureSearches(city.getOtpBaseUrl(), query);
+        routes.sort(Comparator
+                .comparingLong(RouteService::departureSortKey)
+                .thenComparingInt(RouteOptionResponse::transfers)
+                .thenComparingLong(RouteOptionResponse::durationSeconds));
         return new RouteSearchResponse(
                 city.getId(),
                 city.getName(),
-                safeOffset,
+                0,
                 safeLimit,
                 routes.size(),
-                paged
+                routes
         );
+    }
+
+    /**
+     * Earliest journey start (first leg {@code startTime}, OTP epoch millis). Used for chronological ordering.
+     */
+    private static long departureSortKey(RouteOptionResponse r) {
+        if (r.legs().isEmpty()) {
+            return Long.MAX_VALUE;
+        }
+        return r.legs().get(0).startTime();
+    }
+
+    /**
+     * OTP plan times: requested departure, then +{@link #ROUTE_SEARCH_SHIFT_STEP_MINUTES} until end of
+     * {@code serviceDate} (23:59:59), deduplicating itineraries across calls.
+     */
+    private List<RouteOptionResponse> mergeRoutesFromShiftedDepartureSearches(
+            String otpBaseUrl, RouteSearchQuery query) {
+        List<Integer> plusMinutesList = shiftOffsetsMinutesThroughEndOfServiceDay(
+                query.serviceDate(), query.serviceTime());
+        List<RouteOptionResponse> merged = new ArrayList<>();
+        Set<String> seenKeys = new HashSet<>();
+        for (int plusMinutes : plusMinutesList) {
+            if (merged.size() >= ROUTE_SEARCH_MERGED_CAP) {
+                break;
+            }
+            RouteSearchQuery shifted = plusMinutes == 0 ? query : shiftServiceTime(query, plusMinutes);
+            JsonNode response = otpClient.searchRoutes(otpBaseUrl, shifted);
+            List<RouteOptionResponse> batch = routesFromOtpPlan(response);
+            for (RouteOptionResponse route : batch) {
+                String key = itineraryDedupKey(route);
+                if (seenKeys.add(key)) {
+                    merged.add(route);
+                    if (merged.size() >= ROUTE_SEARCH_MERGED_CAP) {
+                        break;
+                    }
+                }
+            }
+            if (merged.size() >= ROUTE_SEARCH_MERGED_CAP) {
+                break;
+            }
+        }
+        // One pass on the full pool: drop transit trips with any WALK leg > 1 km (see below). Per-batch
+        // fallback used to re-inject long walks from other time slices; global fallback keeps UX if OTP
+        // only returns such itineraries.
+        return applyWalkLegCapWhenTransit(merged);
+    }
+
+    /**
+     * Minute offsets from the user’s {@code serviceTime} through the end of {@code serviceDate} (inclusive),
+     * stepping by {@link #ROUTE_SEARCH_SHIFT_STEP_MINUTES}, capped by {@link #MAX_OTP_PLAN_CALLS_PER_SEARCH}.
+     */
+    static List<Integer> shiftOffsetsMinutesThroughEndOfServiceDay(LocalDate serviceDate, LocalTime serviceTime) {
+        LocalDateTime windowStart = LocalDateTime.of(serviceDate, serviceTime);
+        LocalDateTime dayEnd = serviceDate.atTime(23, 59, 59);
+        List<Integer> out = new ArrayList<>();
+        if (windowStart.isAfter(dayEnd)) {
+            out.add(0);
+            return out;
+        }
+        LocalDateTime t = windowStart;
+        while (!t.isAfter(dayEnd) && out.size() < MAX_OTP_PLAN_CALLS_PER_SEARCH) {
+            out.add((int) Duration.between(windowStart, t).toMinutes());
+            t = t.plusMinutes(ROUTE_SEARCH_SHIFT_STEP_MINUTES);
+        }
+        return out;
+    }
+
+    private static RouteSearchQuery shiftServiceTime(RouteSearchQuery base, int plusMinutes) {
+        LocalDateTime dt = LocalDateTime.of(base.serviceDate(), base.serviceTime()).plusMinutes(plusMinutes);
+        return new RouteSearchQuery(
+                base.origin(),
+                base.destination(),
+                dt.toLocalDate(),
+                dt.toLocalTime(),
+                base.passengerCount(),
+                base.itineraryCount());
+    }
+
+    /**
+     * Collapse only true duplicates across shifted OTP calls (same routes and same scheduled transit legs).
+     * Includes endpoints so distinct itineraries are not merged when GTFS route id is missing in the response.
+     */
+    private static String itineraryDedupKey(RouteOptionResponse r) {
+        StringBuilder sb = new StringBuilder();
+        for (LegResponse leg : r.legs()) {
+            if (leg.mode() != null && "WALK".equalsIgnoreCase(leg.mode().trim())) {
+                continue;
+            }
+            String routeKey = leg.routeId() != null && !leg.routeId().isBlank() ? leg.routeId() : leg.mode();
+            sb.append(routeKey).append('|')
+                    .append(leg.startTime()).append('|').append(leg.endTime()).append('|')
+                    .append(leg.fromName()).append('→').append(leg.toName()).append(';');
+        }
+        if (!sb.isEmpty()) {
+            return sb.toString();
+        }
+        long firstStart = r.legs().isEmpty() ? 0L : r.legs().get(0).startTime();
+        return "walkonly|" + r.durationSeconds() + "|" + r.walkDistanceMeters() + "|" + firstStart;
+    }
+
+    private List<RouteOptionResponse> routesFromOtpPlan(JsonNode response) {
+        List<RouteOptionResponse> routes = new ArrayList<>();
+        JsonNode itineraries = response.path("plan").path("itineraries");
+        if (!itineraries.isArray()) {
+            return routes;
+        }
+        for (JsonNode itinerary : itineraries) {
+            JsonNode legsNode = itinerary.path("legs");
+            routes.add(new RouteOptionResponse(
+                    itinerary.path("duration").asLong(0),
+                    countTransfersFromLegs(legsNode),
+                    Math.round(itinerary.path("walkDistance").asDouble(0)),
+                    estimatePriceLei(legsNode),
+                    "5 lei / 90 min from first transit boarding",
+                    toLegs(legsNode)));
+        }
+        return routes;
+    }
+
+    /**
+     * Remove walk-only itineraries whose total or per-leg walk exceeds {@link #MAX_WALK_LEG_METERS_WHEN_TRANSIT}.
+     * Remove transit itineraries when any WALK leg exceeds that cap. If the latter would remove every remaining
+     * transit option, return the list after walk-only filtering only (still never restores excessive walk-only).
+     */
+    private List<RouteOptionResponse> applyWalkLegCapWhenTransit(List<RouteOptionResponse> routes) {
+        List<RouteOptionResponse> withoutWalkOnlyOverCap = routes.stream()
+                .filter(r -> !walkOnlyItineraryExceedsMaxWalk(r))
+                .collect(Collectors.toCollection(ArrayList::new));
+
+        List<RouteOptionResponse> filtered = withoutWalkOnlyOverCap.stream()
+                .filter(r -> !itineraryHasTransitWithWalkLegOverCap(r))
+                .collect(Collectors.toCollection(ArrayList::new));
+
+        if (filtered.isEmpty()
+                && withoutWalkOnlyOverCap.stream().anyMatch(this::itineraryHasTransit)) {
+            return new ArrayList<>(withoutWalkOnlyOverCap);
+        }
+        return filtered;
+    }
+
+    private boolean itineraryHasTransit(RouteOptionResponse r) {
+        return r.legs().stream()
+                .anyMatch(leg -> leg.mode() != null && !"WALK".equalsIgnoreCase(leg.mode().trim()));
+    }
+
+    private boolean walkOnlyItineraryExceedsMaxWalk(RouteOptionResponse r) {
+        if (itineraryHasTransit(r)) {
+            return false;
+        }
+        if (r.walkDistanceMeters() > MAX_WALK_LEG_METERS_WHEN_TRANSIT) {
+            return true;
+        }
+        return r.legs().stream()
+                .anyMatch(leg -> leg.mode() != null
+                        && "WALK".equalsIgnoreCase(leg.mode().trim())
+                        && effectiveWalkLegMeters(leg) > MAX_WALK_LEG_METERS_WHEN_TRANSIT);
+    }
+
+    private boolean itineraryHasTransitWithWalkLegOverCap(RouteOptionResponse r) {
+        if (!itineraryHasTransit(r)) {
+            return false;
+        }
+        return r.legs().stream().anyMatch(this::walkLegExceedsCapWhenTransitPresent);
+    }
+
+    /** Walk length from OTP {@code distance} when present; otherwise straight-line from leg endpoints. */
+    private boolean walkLegExceedsCapWhenTransitPresent(LegResponse leg) {
+        if (leg.mode() == null || !"WALK".equalsIgnoreCase(leg.mode().trim())) {
+            return false;
+        }
+        return effectiveWalkLegMeters(leg) > MAX_WALK_LEG_METERS_WHEN_TRANSIT;
+    }
+
+    private double effectiveWalkLegMeters(LegResponse leg) {
+        double meters = leg.distance();
+        if (meters <= 0.0) {
+            meters = StopSuggestionMerge.distanceMeters(
+                    leg.fromLat(), leg.fromLon(), leg.toLat(), leg.toLon());
+        }
+        return meters;
     }
     public List<BusLineResponse> listBusLines(UUID cityId) {
         cityRepository.findById(cityId).orElseThrow(() -> new CityNotFoundException(cityId));
@@ -129,6 +317,66 @@ public class RouteService {
         );
     }
 
+    /**
+     * Builds a single JSON document for mobile offline mode: all bus lines, per-direction stops,
+     * and Mon/Sat/Sun timetable slices (aligned with the app's week anchor Monday).
+     */
+    public OfflinePackResponse buildOfflinePack(UUID cityId, LocalDate anchorMonday) {
+        cityRepository.findById(cityId).orElseThrow(() -> new CityNotFoundException(cityId));
+        LocalDate saturday = anchorMonday.plusDays(5);
+        LocalDate sunday = anchorMonday.plusDays(6);
+        Instant generatedAt = Instant.now();
+
+        List<BusLineResponse> buses = gtfsReadService.listBusLines(cityId);
+        List<OfflinePackRouteStopsResponse> routeStopsOut = new ArrayList<>();
+        List<OfflinePackTimetableEntryResponse> timetablesOut = new ArrayList<>();
+
+        record DaySlice(LocalDate date, String dayKind) {}
+        List<DaySlice> daySlices = List.of(
+                new DaySlice(anchorMonday, "MONFRI"),
+                new DaySlice(saturday, "SATURDAY"),
+                new DaySlice(sunday, "SUNDAY")
+        );
+
+        String[] directions = {"0", "1"};
+        for (BusLineResponse line : buses) {
+            String routeId = line.routeId();
+            for (String directionId : directions) {
+                List<RouteStopResponse> stops = gtfsReadService.routeStops(cityId, routeId, directionId);
+                if (stops.isEmpty()) {
+                    continue;
+                }
+                routeStopsOut.add(new OfflinePackRouteStopsResponse(routeId, directionId, stops));
+                for (RouteStopResponse stop : stops) {
+                    for (DaySlice day : daySlices) {
+                        List<StopTimetableEntryResponse> departures = gtfsReadService.routeStopTimes(
+                                cityId, routeId, stop.stopId(), day.date(), directionId);
+                        StopTimetableResponse tt = new StopTimetableResponse(
+                                cityId.toString(),
+                                routeId,
+                                stop.stopId(),
+                                day.date().toString(),
+                                departures
+                        );
+                        timetablesOut.add(new OfflinePackTimetableEntryResponse(
+                                routeId, stop.stopId(), directionId, day.dayKind(), tt));
+                    }
+                }
+            }
+        }
+
+        log.info("buildOfflinePack cityId={} buses={} routeStopSlices={} timetableSlices={} anchorMonday={}",
+                cityId, buses.size(), routeStopsOut.size(), timetablesOut.size(), anchorMonday);
+
+        return new OfflinePackResponse(
+                cityId.toString(),
+                anchorMonday.toString(),
+                generatedAt.toString(),
+                buses,
+                routeStopsOut,
+                timetablesOut
+        );
+    }
 
     public List<NearbyStopResponse> nearbyStops(UUID cityId, double latitude, double longitude, int radiusMeters) {
         City city = cityRepository.findById(cityId)
