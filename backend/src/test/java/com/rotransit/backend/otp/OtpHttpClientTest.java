@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import org.mockito.ArgumentMatchers;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -45,6 +46,28 @@ class OtpHttpClientTest {
 
         assertTrue(result.path("plan").path("itineraries").isArray());
         assertEquals(0, result.path("plan").path("itineraries").size());
+    }
+
+    @Test
+    void searchRoutesFallsBackToRelaxedWhenStrictPlanEmpty() throws Exception {
+        JsonNode emptyPlan = objectMapper.readTree("{\"plan\":{\"itineraries\":[]}}");
+        JsonNode withItin = objectMapper.readTree(
+                "{\"plan\":{\"itineraries\":[{\"duration\":1200,\"walkDistance\":400}]}}");
+
+        when(restTemplate.getForEntity(
+                        ArgumentMatchers.<String>argThat(
+                                url -> url != null && url.contains("maxWalkDistance")),
+                        eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(emptyPlan, HttpStatus.OK));
+        when(restTemplate.getForEntity(
+                        ArgumentMatchers.<String>argThat(
+                                url -> url != null && !url.contains("maxWalkDistance")),
+                        eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(withItin, HttpStatus.OK));
+
+        JsonNode result = otpHttpClient.searchRoutes("http://localhost:8080/otp", sampleQuery());
+
+        assertEquals(1, result.path("plan").path("itineraries").size());
     }
 
     @Test

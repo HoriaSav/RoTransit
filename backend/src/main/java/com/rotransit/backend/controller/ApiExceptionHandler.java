@@ -17,6 +17,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -79,6 +80,21 @@ public class ApiExceptionHandler {
                 ex.getMessage(),
                 request,
                 Map.of("upstream", "otp")
+        );
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ApiErrorResponse handleNoResourceFound(NoResourceFoundException ex, HttpServletRequest request) {
+        log.warn("No resource: {}", ex.getResourcePath());
+        return error(
+                "NOT_FOUND",
+                "No handler for this path (deploy a backend build that includes the route, or check the URL).",
+                request,
+                Map.of(
+                        "exceptionType", ex.getClass().getSimpleName(),
+                        "resourcePath", ex.getResourcePath()
+                )
         );
     }
 

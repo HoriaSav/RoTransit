@@ -8,10 +8,12 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,6 +28,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -144,6 +147,195 @@ class RouteServiceUnitTest {
         var result = routeService.searchRoutes(cityId, sampleQuery(), 0, 10);
         assertEquals(1, result.routes().size());
         assertEquals(0, result.routes().get(0).transfers());
+    }
+
+    @Test
+    void searchRoutesUsesShiftedDepartureTimesAndDedupesRepeatedPlans() throws Exception {
+        UUID cityId = UUID.fromString("d4d4d4d4-d4d4-d4d4-d4d4-d4d4d4d4d4d4");
+        City city = mockCity(cityId, "Brasov", "http://otp:8080/otp");
+        when(cityRepository.findById(cityId)).thenReturn(Optional.of(city));
+        JsonNode plan = objectMapper.readTree("""
+                {
+                  "plan": {
+                    "itineraries": [
+                      {
+                        "duration": 1200,
+                        "walkDistance": 100,
+                        "legs": [
+                          { "mode": "BUS", "route": {"gtfsId": "R1"}, "from": {}, "to": {}, "startTime": 1000, "endTime": 2000, "distance": 3000 }
+                        ]
+                      }
+                    ]
+                  }
+                }
+                """);
+        when(otpClient.searchRoutes(anyString(), any())).thenReturn(plan);
+
+        var result = routeService.searchRoutes(cityId, sampleQuery(), 0, 10);
+
+        RouteSearchQuery q = sampleQuery();
+        int expectedCalls = RouteService.shiftOffsetsMinutesThroughEndOfServiceDay(
+                q.serviceDate(), q.serviceTime()).size();
+        ArgumentCaptor<RouteSearchQuery> queryCap = ArgumentCaptor.forClass(RouteSearchQuery.class);
+        verify(otpClient, times(expectedCalls)).searchRoutes(anyString(), queryCap.capture());
+        List<RouteSearchQuery> queries = queryCap.getAllValues();
+        assertEquals(LocalTime.of(8, 30), queries.get(0).serviceTime());
+        assertEquals(LocalTime.of(8, 45), queries.get(1).serviceTime());
+        assertTrue(queries.get(queries.size() - 1).serviceTime().getHour() >= 23);
+
+        assertEquals(1, result.routes().size());
+    }
+
+    @Test
+    void shiftOffsetsStepThroughEndOfServiceDay() {
+        List<Integer> offsets = RouteService.shiftOffsetsMinutesThroughEndOfServiceDay(
+                LocalDate.of(2026, 3, 27), LocalTime.of(8, 30));
+        assertEquals(0, offsets.get(0).intValue());
+        assertEquals(15, offsets.get(1).intValue());
+        assertTrue(offsets.size() >= 60, "8:30→23:59 should need many 15-min OTP slots");
+        assertTrue(offsets.size() <= 256);
+    }
+
+    @Test
+    void searchRoutesKeepsDistinctItinerariesAcrossShiftedCalls() throws Exception {
+        UUID cityId = UUID.fromString("e5e5e5e5-e5e5-e5e5-e5e5-e5e5e5e5e5e5");
+        City city = mockCity(cityId, "Brasov", "http://otp:8080/otp");
+        when(cityRepository.findById(cityId)).thenReturn(Optional.of(city));
+        JsonNode planR1 = objectMapper.readTree("""
+                {"plan":{"itineraries":[{"duration":1000,"walkDistance":50,"legs":[
+                  {"mode":"BUS","route":{"gtfsId":"R1"},"from":{},"to":{},"startTime":100,"endTime":200,"distance":100}
+                ]}]}}
+                """);
+        JsonNode planR2 = objectMapper.readTree("""
+                {"plan":{"itineraries":[{"duration":1100,"walkDistance":50,"legs":[
+                  {"mode":"BUS","route":{"gtfsId":"R2"},"from":{},"to":{},"startTime":900,"endTime":1000,"distance":100}
+                ]}]}}
+                """);
+        AtomicInteger call = new AtomicInteger(0);
+        when(otpClient.searchRoutes(anyString(), any())).thenAnswer(inv -> call.getAndIncrement() == 1 ? planR2 : planR1);
+
+        var result = routeService.searchRoutes(cityId, sampleQuery(), 0, 10);
+
+        assertEquals(2, result.routes().size());
+        assertEquals(1000L, result.routes().get(0).durationSeconds());
+        assertEquals(1100L, result.routes().get(1).durationSeconds());
+    }
+
+    @Test
+    void searchRoutesDropsTransitItineraryWhenAnyWalkLegExceedsCap() throws Exception {
+        UUID cityId = UUID.fromString("a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1");
+        City city = mockCity(cityId, "Brasov", "http://otp:8080/otp");
+        when(cityRepository.findById(cityId)).thenReturn(Optional.of(city));
+        JsonNode plan = objectMapper.readTree("""
+                {
+                  "plan": {
+                    "itineraries": [
+                      {
+                        "duration": 900,
+                        "walkDistance": 1300,
+                        "legs": [
+                          { "mode": "WALK", "from": {}, "to": {}, "startTime": 1000, "endTime": 1100, "distance": 1200 },
+                          { "mode": "BUS", "from": {}, "to": {}, "startTime": 1100, "endTime": 2000, "distance": 3000 }
+                        ]
+                      },
+                      {
+                        "duration": 2000,
+                        "walkDistance": 100,
+                        "legs": [
+                          { "mode": "WALK", "from": {}, "to": {}, "startTime": 1000, "endTime": 1100, "distance": 100 },
+                          { "mode": "BUS", "from": {}, "to": {}, "startTime": 1100, "endTime": 3000, "distance": 4000 }
+                        ]
+                      }
+                    ]
+                  }
+                }
+                """);
+        when(otpClient.searchRoutes(anyString(), any())).thenReturn(plan);
+
+        var result = routeService.searchRoutes(cityId, sampleQuery(), 0, 10);
+        assertEquals(1, result.routes().size());
+        assertEquals(2000L, result.routes().get(0).durationSeconds());
+    }
+
+    @Test
+    void searchRoutesFallsBackToUnfilteredWhenCapWouldRemoveAllTransitItineraries() throws Exception {
+        UUID cityId = UUID.fromString("b2b2b2b2-b2b2-b2b2-b2b2-b2b2b2b2b2b2");
+        City city = mockCity(cityId, "Brasov", "http://otp:8080/otp");
+        when(cityRepository.findById(cityId)).thenReturn(Optional.of(city));
+        JsonNode plan = objectMapper.readTree("""
+                {
+                  "plan": {
+                    "itineraries": [
+                      {
+                        "duration": 900,
+                        "walkDistance": 1300,
+                        "legs": [
+                          { "mode": "WALK", "from": {}, "to": {}, "startTime": 1000, "endTime": 1100, "distance": 1200 },
+                          { "mode": "BUS", "from": {}, "to": {}, "startTime": 1100, "endTime": 2000, "distance": 3000 }
+                        ]
+                      }
+                    ]
+                  }
+                }
+                """);
+        when(otpClient.searchRoutes(anyString(), any())).thenReturn(plan);
+
+        var result = routeService.searchRoutes(cityId, sampleQuery(), 0, 10);
+        assertEquals(1, result.routes().size());
+        assertEquals(900L, result.routes().get(0).durationSeconds());
+    }
+
+    @Test
+    void searchRoutesRemovesWalkOnlyItineraryWhenWalkExceedsCap() throws Exception {
+        UUID cityId = UUID.fromString("c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3");
+        City city = mockCity(cityId, "Brasov", "http://otp:8080/otp");
+        when(cityRepository.findById(cityId)).thenReturn(Optional.of(city));
+        JsonNode plan = objectMapper.readTree("""
+                {
+                  "plan": {
+                    "itineraries": [
+                      {
+                        "duration": 3600,
+                        "walkDistance": 2000,
+                        "legs": [
+                          { "mode": "WALK", "from": {}, "to": {}, "startTime": 1000, "endTime": 5000, "distance": 2000 }
+                        ]
+                      }
+                    ]
+                  }
+                }
+                """);
+        when(otpClient.searchRoutes(anyString(), any())).thenReturn(plan);
+
+        var result = routeService.searchRoutes(cityId, sampleQuery(), 0, 10);
+        assertTrue(result.routes().isEmpty());
+    }
+
+    @Test
+    void searchRoutesKeepsWalkOnlyItineraryWhenWalkUnderCap() throws Exception {
+        UUID cityId = UUID.fromString("e6e6e6e6-e6e6-e6e6-e6e6-e6e6e6e6e6e6");
+        City city = mockCity(cityId, "Brasov", "http://otp:8080/otp");
+        when(cityRepository.findById(cityId)).thenReturn(Optional.of(city));
+        JsonNode plan = objectMapper.readTree("""
+                {
+                  "plan": {
+                    "itineraries": [
+                      {
+                        "duration": 600,
+                        "walkDistance": 400,
+                        "legs": [
+                          { "mode": "WALK", "from": {}, "to": {}, "startTime": 1000, "endTime": 2000, "distance": 400 }
+                        ]
+                      }
+                    ]
+                  }
+                }
+                """);
+        when(otpClient.searchRoutes(anyString(), any())).thenReturn(plan);
+
+        var result = routeService.searchRoutes(cityId, sampleQuery(), 0, 10);
+        assertEquals(1, result.routes().size());
+        assertEquals(600L, result.routes().get(0).durationSeconds());
     }
 
     @Test

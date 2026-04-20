@@ -145,7 +145,7 @@ class RouteControllerIntegrationTest {
             "DELETE FROM cities",
             "INSERT INTO cities (id, name, country, otp_base_url) VALUES ('13131313-1313-1313-1313-131313131313', 'Brasov', 'Romania', 'http://otp:8080/otp')"
     })
-    void searchRoutesSupportsOffsetLimitPagination() throws Exception {
+    void searchRoutesReturnsFullItineraryListForClientSidePaging() throws Exception {
         JsonNode otpResponse = objectMapper.readTree("""
                 {
                   "plan": {
@@ -168,11 +168,11 @@ class RouteControllerIntegrationTest {
                         .queryParam("offset", "1")
                         .queryParam("limit", "1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.offset").value(1))
+                .andExpect(jsonPath("$.offset").value(0))
                 .andExpect(jsonPath("$.limit").value(1))
                 .andExpect(jsonPath("$.total").value(3))
-                .andExpect(jsonPath("$.routes.length()").value(1))
-                .andExpect(jsonPath("$.routes[0].durationSeconds").value(1100));
+                .andExpect(jsonPath("$.routes.length()").value(3))
+                .andExpect(jsonPath("$.routes[0].durationSeconds").value(1000));
     }
 
     @Test
