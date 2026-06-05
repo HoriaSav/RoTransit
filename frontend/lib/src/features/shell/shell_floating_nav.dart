@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:rotransit_frontend/l10n/app_localizations.dart';
 
+import '../../core/theme/app_extra_colors.dart';
 import 'shell_layout.dart';
 
 /// Compact floating tab bar (fixed height). [NavigationBar] ignores small heights
@@ -16,10 +18,13 @@ class ShellFloatingNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+    final extra = context.extraColors;
     return Material(
-      color: Colors.white.withValues(alpha: 0.94),
+      color: extra.floatingNavBackground,
       elevation: 0,
-      shadowColor: Colors.black26,
+      shadowColor: scheme.shadow,
       borderRadius: BorderRadius.circular(24),
       clipBehavior: Clip.antiAlias,
       child: SizedBox(
@@ -30,28 +35,28 @@ class ShellFloatingNavBar extends StatelessWidget {
               selected: selectedIndex == 0,
               icon: Icons.search_outlined,
               selectedIcon: Icons.search,
-              label: 'Search',
+              label: l10n.navSearch,
               onTap: () => onDestinationSelected(0),
             ),
             _Slot(
               selected: selectedIndex == 1,
               icon: Icons.directions_bus_outlined,
               selectedIcon: Icons.directions_bus,
-              label: 'Bus',
+              label: l10n.navBus,
               onTap: () => onDestinationSelected(1),
             ),
             _Slot(
               selected: selectedIndex == 2,
               icon: Icons.favorite_border_rounded,
               selectedIcon: Icons.favorite_rounded,
-              label: 'Favorites',
+              label: l10n.navFavorites,
               onTap: () => onDestinationSelected(2),
             ),
             _Slot(
               selected: selectedIndex == 3,
               icon: Icons.settings_outlined,
               selectedIcon: Icons.settings,
-              label: 'Settings',
+              label: l10n.navSettings,
               onTap: () => onDestinationSelected(3),
             ),
           ],
@@ -76,12 +81,10 @@ class _Slot extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
 
-  static const Color _brandBlue = Color(0xFF0A3E96);
-  static const Color _muted = Color(0xFF6E7480);
-  static const Color _indicator = Color(0xFFC8F7E5);
-
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final extra = context.extraColors;
     return Expanded(
       child: InkWell(
         onTap: onTap,
@@ -100,14 +103,14 @@ class _Slot extends StatelessWidget {
                         width: 50,
                         height: 30,
                         decoration: BoxDecoration(
-                          color: _indicator,
+                          color: extra.floatingNavIndicator,
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
                     Icon(
                       selected ? selectedIcon : icon,
                       size: 24,
-                      color: selected ? _brandBlue : _muted,
+                      color: selected ? scheme.primary : scheme.onSurfaceVariant,
                     ),
                   ],
                 ),
@@ -122,7 +125,7 @@ class _Slot extends StatelessWidget {
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                   letterSpacing: 0.12,
                   height: 1,
-                  color: selected ? _brandBlue : _muted,
+                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
                 ),
               ),
             ],

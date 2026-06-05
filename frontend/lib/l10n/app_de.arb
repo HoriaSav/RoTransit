@@ -1,0 +1,58 @@
+{
+  "@@locale": "de",
+
+  "appTitle": "RoTransit",
+
+  "navSearch": "Suche",
+  "navBus": "Bus",
+  "navFavorites": "Favoriten",
+  "navSettings": "Einstellungen",
+
+  "settingsTitle": "Einstellungen",
+  "city": "Stadt",
+  "notifications": "Benachrichtigungen",
+  "darkMode": "Dunkelmodus",
+  "teTransport": "TE-Verkehr",
+  "language": "Sprache",
+  "languageEnglish": "Englisch",
+  "languageRomanian": "Rumänisch",
+  "languageGerman": "Deutsch",
+
+  "offlineTimetables": "Offline-Fahrpläne",
+  "offlineOnDevicePack": "Paket auf dem Gerät: {version}",
+  "offlineServerMeta": "Server-Meta (für Updates): {meta}",
+  "offlineUpdatingBackground": "Fahrpläne werden heruntergeladen…",
+  "offlineDownloadProgressPercent": "Wird heruntergeladen… {percent}%",
+  "offlineDownloadEtaMinutes": "noch ~{count} Min.",
+  "offlineDownloadEtaSeconds": "noch ~{count} Sek.",
+  "offlineDownloadSaving": "Fahrpläne werden auf dem Gerät gespeichert…",
+  "offlineDownloadReceived": "{size} heruntergeladen…",
+  "offlineDownloadReceivedWithElapsed": "{size} heruntergeladen · {seconds} Sek.",
+  "offlinePackNotAvailablePreview": "Im Vorschaumodus nicht verfügbar",
+  "offlinePackChooseCityFirst": "Wähle zuerst eine Stadt",
+  "offlinePackNoneYet": "Nicht heruntergeladen",
+  "offlineMetaEndpointMissing": "Nicht verfügbar — GET /api/buses/offline-pack-meta auf dem Server bereitstellen",
+  "timetableDownloadSourceBus": "Busfahrpläne",
+  "timetableDownloadConfirmTitle": "Fahrpläne herunterladen?",
+  "timetableDownloadConfirmMessage": "Offline-Busfahrpläne für {cityName} herunterladen? Dies kann mobile Daten verbrauchen.",
+  "timetableDownloadAction": "Herunterladen",
+  "timetableDownloadSuccess": "Fahrpläne für {cityName} heruntergeladen",
+  "timetableDownloadFailed": "Fahrpläne konnten nicht heruntergeladen werden",
+  "timetableDownloadOffline": "Verbinde dich mit dem Internet, um Fahrpläne herunterzuladen",
+
+  "busTabTimetablesNotDownloadedTitle": "Fahrpläne nicht heruntergeladen",
+  "busTabTimetablesNotDownloadedBody": "Lade Busfahrpläne für diese Stadt in den Einstellungen herunter, um Linien und Fahrzeiten anzuzeigen.",
+  "busTabOpenSettings": "Zu Einstellungen",
+
+  "version": "Version",
+  "privacyPolicy": "Datenschutz",
+  "termsOfUse": "Nutzungsbedingungen",
+  "help": "Hilfe",
+  "contactUs": "Kontakt",
+
+  "countryLabel": "Land: {country}",
+  "cityChangedTo": "Stadt geändert zu {name}",
+  "cityUnavailable": "Nicht verfügbar",
+
+  "pressBackAgainToExit": "Drücke erneut schnell auf Zurück, um die App zu beenden"
+}

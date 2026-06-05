@@ -11,7 +11,7 @@ class LocalDb {
     final dbPath = p.join(dir.path, 'rotransit.db');
     _db = await openDatabase(
       dbPath,
-      version: 2,
+      version: 4,
       onCreate: (db, version) async => _createTables(db),
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -31,6 +31,14 @@ class LocalDb {
               created_at TEXT NOT NULL
             );
           ''');
+        }
+        if (oldVersion < 3) {
+          await _createOfflineTransitTables(db);
+        }
+        if (oldVersion < 4 && oldVersion >= 3) {
+          await db.execute(
+            'ALTER TABLE offline_transit_meta ADD COLUMN pack_version TEXT NOT NULL DEFAULT \'\'',
+          );
         }
       },
     );
@@ -78,6 +86,45 @@ class LocalDb {
         service_date_iso TEXT NOT NULL,
         service_time_hhmm TEXT NOT NULL,
         created_at TEXT NOT NULL
+      );
+    ''');
+    await _createOfflineTransitTables(db);
+  }
+
+  static Future<void> _createOfflineTransitTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS offline_transit_meta(
+        city_id TEXT PRIMARY KEY,
+        anchor_monday_iso TEXT NOT NULL,
+        downloaded_at_iso TEXT NOT NULL,
+        pack_version TEXT NOT NULL DEFAULT '',
+        schema_version INTEGER NOT NULL
+      );
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS offline_bus_lines(
+        city_id TEXT PRIMARY KEY,
+        buses_json TEXT NOT NULL
+      );
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS offline_route_stops(
+        city_id TEXT NOT NULL,
+        route_id TEXT NOT NULL,
+        direction_id TEXT NOT NULL,
+        stops_json TEXT NOT NULL,
+        PRIMARY KEY (city_id, route_id, direction_id)
+      );
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS offline_timetables(
+        city_id TEXT NOT NULL,
+        route_id TEXT NOT NULL,
+        stop_id TEXT NOT NULL,
+        direction_id TEXT NOT NULL,
+        day_kind TEXT NOT NULL,
+        timetable_json TEXT NOT NULL,
+        PRIMARY KEY (city_id, route_id, stop_id, direction_id, day_kind)
       );
     ''');
   }

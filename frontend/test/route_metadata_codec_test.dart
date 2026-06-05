@@ -10,8 +10,13 @@ void main() {
       legs: [
         RouteLeg(
           mode: 'WALK',
+          routeId: '',
           fromName: 'A',
+          fromLat: 0,
+          fromLon: 0,
           toName: 'B',
+          toLat: 0,
+          toLon: 0,
           startTime: 1,
           endTime: 2,
           distance: 100,

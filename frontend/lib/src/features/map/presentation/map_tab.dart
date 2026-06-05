@@ -1,14 +1,20 @@
+import 'dart:async' show StreamSubscription, unawaited;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:latlong2/latlong.dart' hide Path;
 
+import '../../../core/format/distance_format.dart';
+import '../../../core/ui/app_snackbar.dart';
+import '../../../core/theme/app_extra_colors.dart';
 import '../../../core/location/user_location_helpers.dart';
+import '../../../core/location/user_location_provider.dart';
 import '../../routes/data/route_api_repository.dart';
 import '../../routes/domain/route_models.dart';
 import '../../routes/state/save_route_controller.dart';
@@ -27,6 +33,11 @@ const double _kUserLocationDotSize = 18;
 /// Landmark: square marker + [Alignment.center] like graph stop dots (avoids bottomCenter/rotate drift when zooming).
 const double _kLandmarkMarkerSize = 32;
 const double _kLandmarkIconSize = 28;
+
+/// Non-highlighted legs: full [_legColor] saturation.
+const double _kMapRouteStrokeOpacityLeg = 1.0;
+/// Highlighted leg: slightly toned down so focus isn’t harsher than the rest.
+const double _kMapRouteStrokeOpacityHighlight = 0.85;
 
 const Map<String, Color> _kLineColorOverrides = {};
 
@@ -90,18 +101,17 @@ Color _legColor(RouteLeg leg) {
   return _stableColorForKey(normalizedMode);
 }
 
-/// Fixed-intensity mode tint for transport line pills (systematic, not per-route).
-Color _transitModePillBackground(String mode, Color surface) {
-  final m = _normalizeMode(mode);
-  final Color tint = switch (m) {
-    'TROLLEYBUS' => const Color(0xFF0D9488),
-    'BUS' => const Color(0xFF2563EB),
-    'TRAM' => const Color(0xFFC2410C),
-    'RAIL' => const Color(0xFF7C3AED),
-    'SUBWAY' => const Color(0xFFDB2777),
-    _ => const Color(0xFF64748B),
-  };
-  return Color.alphaBlend(tint.withValues(alpha: 0.10), surface);
+/// Softer accent for itinerary pills and timeline dots; map polylines stay [_legColor].
+Color _itineraryAccentColor(Color base) {
+  const neutral = Color(0xFF94A3B8);
+  return Color.lerp(base, neutral, 0.32)!;
+}
+
+/// Text/icon on top of a solid [routeColor] pill (same RGB as map polylines).
+Color _onRouteColorInk(Color routeColor) {
+  return routeColor.computeLuminance() > 0.62
+      ? const Color(0xFF0F172A)
+      : Colors.white;
 }
 
 /// Shared geometry and typography for itinerary line pills.
@@ -128,12 +138,33 @@ class _TransitSummaryItem {
     required this.modeLabel,
     required this.lineId,
     required this.modeRaw,
+    required this.routeColor,
   });
 
   final String modeLabel;
   final String lineId;
   /// Raw OTP mode for pill tint (trolleybus vs bus, etc.).
   final String modeRaw;
+  /// Same color as the map polyline for this line ([_legColor]).
+  final Color routeColor;
+}
+
+/// Mode icon for itinerary rows and timeline (trolleybus uses bolt, not walk).
+Widget _modeIconForMode(String mode, {double size = 18}) {
+  final normalized = mode.toUpperCase();
+  final IconData icon = switch (normalized) {
+    'WALK' => Icons.directions_walk,
+    'BICYCLE' => Icons.directions_bike,
+    'BIKE' => Icons.directions_bike,
+    'CAR' => Icons.directions_car,
+    'BUS' => Icons.directions_bus,
+    'TROLLEYBUS' => Icons.electric_bolt,
+    'TRAM' => Icons.tram,
+    'RAIL' => Icons.train,
+    'SUBWAY' => Icons.subway,
+    _ => Icons.directions_transit,
+  };
+  return Icon(icon, size: size);
 }
 
 List<_TransitSummaryItem> _buildTransitSummary(List<RouteLeg> transitLegs) {
@@ -152,17 +183,166 @@ List<_TransitSummaryItem> _buildTransitSummary(List<RouteLeg> transitLegs) {
         modeLabel: modeLabel,
         lineId: lineId,
         modeRaw: leg.mode,
+        routeColor: _legColor(leg),
       ),
     );
   }
   return items;
 }
 
+/// Drag handle height (Google-maps-style sheet resize).
+const double _kRouteSheetDragHandleHeight = 28;
+
+/// Min fraction of the route sheet slot height (peek: handle + back row).
+const double _kRouteSheetMinExtent = 0.13;
+
+/// Middle snap position (half of available slot height).
+const double _kRouteSheetSnapMidExtent = 0.5;
+
+/// Details: hide scrollable body below this height (peek mode).
+const double _kDetailsSheetBodyMinHeight = 172;
+
+/// Top drag area for resizing the route sheet over the map.
+class _RouteSheetDragHandle extends StatelessWidget {
+  const _RouteSheetDragHandle({
+    required this.onDragDelta,
+    this.onDragEnd,
+    this.allowDrag = true,
+  });
+
+  final ValueChanged<double> onDragDelta;
+  final VoidCallback? onDragEnd;
+  final bool allowDrag;
+
+  @override
+  Widget build(BuildContext context) {
+    final line = Theme.of(context).colorScheme.outlineVariant;
+    final child = SizedBox(
+      height: _kRouteSheetDragHandleHeight,
+      width: double.infinity,
+      child: Center(
+        child: Container(
+          width: 40,
+          height: 4,
+          decoration: BoxDecoration(
+            color: line.withValues(
+              alpha: allowDrag ? 0.85 : 0.45,
+            ),
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+      ),
+    );
+    if (!allowDrag) return child;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragUpdate: (d) => onDragDelta(d.delta.dy),
+      onVerticalDragEnd: (_) => onDragEnd?.call(),
+      child: child,
+    );
+  }
+}
+
+/// Map route sheet: compact icon-only back (avoids [IconButton] default 48dp min height).
+Widget _mapSheetBackIconButton({
+  required BuildContext context,
+  required VoidCallback onPressed,
+}) {
+  return Tooltip(
+    message: 'Back',
+    child: Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onPressed,
+        customBorder: const CircleBorder(),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Icon(
+            Icons.arrow_back,
+            size: 22,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// Transit line chips with arrows — same pattern as route list and trip details summary.
+class _TransitSummaryChipsRow extends StatelessWidget {
+  const _TransitSummaryChipsRow({required this.option});
+
+  final RouteOption option;
+
+  @override
+  Widget build(BuildContext context) {
+    final transitSummary = _buildTransitSummary(_transitLegs(option));
+    if (transitSummary.isEmpty) {
+      return Text(
+        'Walking route',
+        style: TextStyle(
+          fontSize: 14.5,
+          fontWeight: FontWeight.w600,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      );
+    }
+    return Wrap(
+      spacing: 8,
+      runSpacing: _kRouteStepRunSpacing,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        for (var i = 0; i < transitSummary.length; i++) ...[
+          _TransitStepChip(item: transitSummary[i]),
+          if (i < transitSummary.length - 1)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Text(
+                '→',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  height: 1,
+                  color: Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
 /// Spacing for itinerary cards in [_RouteListPanel].
 const double _kRouteStepRunSpacing = 6;
+
+/// Soft elevation for step cards in [_RouteDetailsPanel].
+List<BoxShadow> _itineraryStepCardShadow(ColorScheme scheme) => [
+      BoxShadow(
+        color: scheme.shadow.withValues(alpha: 0.14),
+        blurRadius: 10,
+        offset: const Offset(0, 3),
+      ),
+      BoxShadow(
+        color: scheme.shadow.withValues(alpha: 0.06),
+        blurRadius: 2,
+        offset: const Offset(0, 1),
+      ),
+    ];
 const double _kMetaIconTextGap = 6;
 const double _kMetaBulletGap = 8;
 const double _kDurationPriceGap = 10;
+
+double _lerpAngleRad(double a, double b, double t) {
+  var delta = b - a;
+  while (delta > math.pi) {
+    delta -= 2 * math.pi;
+  }
+  while (delta < -math.pi) {
+    delta += 2 * math.pi;
+  }
+  return a + delta * t;
+}
 
 class MapTab extends ConsumerStatefulWidget {
   const MapTab({super.key});
@@ -178,26 +358,56 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
   static const _fallbackZoom = 11.0;
   static const _userZoom = 15.5;
   final _store = const FMTCStore('rotransit_osm_cache');
+  /// Stable instance — do not allocate a new [NetworkTileProvider] each build.
+  final _networkTileProvider = NetworkTileProvider();
+  /// Created once when FMTC store is ready; avoids tile pipeline reset on rebuild.
+  FMTCTileProvider? _fmtcTileProvider;
   final _mapController = MapController();
-  bool _cacheReady = false;
   LatLng? _userLocation;
   double _mapRotation = 0;
   bool _initialUserFocusApplied = false;
   int? _lastFittedOptionHash;
-  String? _lastFittedListRequestKey;
   final _routeListScrollController = ScrollController();
-  bool _detailsCollapsed = false;
-  bool _searchViewResetApplied = false;
+  /// Fraction of the route sheet slot height — [ValueNotifier] avoids rebuilding [FlutterMap] on drag.
+  late final ValueNotifier<double> _routeMapSheetExtentNotifier;
+  AnimationController? _routeSheetSnapController;
+  /// Leg index in [RouteOption.legs] highlighted on the map and in the timeline.
+  int _detailsHighlightedLegIndex = 0;
+  bool _routeListLoadingMore = false;
+
+  StreamSubscription<CompassEvent>? _itineraryCompassSub;
+  bool _itineraryCompassFollowing = false;
+  double _itineraryCompassSmoothedRad = 0;
+  DateTime? _lastItineraryCompassApply;
+
+  /// Single instance so [FlutterMap.didUpdateWidget] does not treat options as
+  /// changed on every parent rebuild (new closures break [MapOptions] equality).
+  late final MapOptions _shellMapOptions;
 
   @override
   void initState() {
     super.initState();
+    _routeMapSheetExtentNotifier = ValueNotifier<double>(1.0);
+    _shellMapOptions = MapOptions(
+      initialCenter: _fallbackCenter,
+      initialZoom: _fallbackZoom,
+      keepAlive: true,
+      onPositionChanged: _onShellMapPositionChanged,
+      onTap: _onShellMapTap,
+    );
     _initCacheStore();
-    _initUserLocation();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _initUserLocation();
+      _resyncItineraryCompassFromProviders();
+    });
   }
 
   @override
   void dispose() {
+    _itineraryCompassSub?.cancel();
+    _routeSheetSnapController?.dispose();
+    _routeMapSheetExtentNotifier.dispose();
     _routeListScrollController.dispose();
     super.dispose();
   }
@@ -206,17 +416,24 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
     try {
       await _store.manage.create();
       if (!mounted) return;
-      setState(() => _cacheReady = true);
+      setState(() {
+        _fmtcTileProvider ??= FMTCTileProvider(
+          stores: {
+            _store.storeName: BrowseStoreStrategy.readUpdateCreate,
+          },
+        );
+      });
     } catch (_) {
-      if (!mounted) return;
-      setState(() => _cacheReady = false);
+      // FMTC unavailable — keep network tiles.
     }
   }
 
-  Future<void> _initUserLocation() async {
-    final pos = await tryGetCurrentUserLatLon();
-    if (!mounted || pos == null) return;
-    final point = LatLng(pos.lat, pos.lon);
+  Future<void> _initUserLocation({bool forceFresh = false}) async {
+    final loc = await ref
+        .read(userLocationProvider.notifier)
+        .resolve(forceFresh: forceFresh);
+    if (!mounted || !loc.hasFix) return;
+    final point = LatLng(loc.lat!, loc.lon!);
     setState(() => _userLocation = point);
     // Keep default city framing on Search; move to user only on explicit action.
     if (!_initialUserFocusApplied) _initialUserFocusApplied = true;
@@ -225,7 +442,7 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
   void _centerOnUser() {
     final point = _userLocation;
     if (point == null) {
-      _initUserLocation();
+      unawaited(_initUserLocation(forceFresh: true));
       return;
     }
     _animateCameraTo(center: point, zoom: _userZoom);
@@ -235,12 +452,237 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
     _animateCameraTo(rotation: 0);
   }
 
+  void _resyncItineraryCompassFromProviders() {
+    if (!mounted) return;
+    // Keep map heading under explicit user control in Search details.
+    // Auto-following device compass forces repeated moveAndRotate calls that
+    // override gesture rotation and cause snap-back behavior.
+    const wantCompass = false;
+    _syncItineraryCompassMode(wantCompass);
+  }
+
+  /// Heading-aligned map rotation while viewing step-by-step itinerary details only.
+  void _syncItineraryCompassMode(bool wantCompass) {
+    if (wantCompass == _itineraryCompassFollowing) return;
+    _itineraryCompassFollowing = wantCompass;
+    if (!wantCompass) {
+      _itineraryCompassSub?.cancel();
+      _itineraryCompassSub = null;
+      _itineraryCompassSmoothedRad = 0;
+      _lastItineraryCompassApply = null;
+      unawaited(_animateCameraTo(rotation: 0));
+      return;
+    }
+    _itineraryCompassSub?.cancel();
+    final stream = FlutterCompass.events;
+    if (stream == null) return;
+    _itineraryCompassSmoothedRad = _mapController.camera.rotation;
+    _itineraryCompassSub = stream.listen(
+      (event) {
+        final heading = event.heading;
+        if (heading == null || !mounted || !_itineraryCompassFollowing) {
+          return;
+        }
+        final now = DateTime.now();
+        final last = _lastItineraryCompassApply;
+        if (last != null && now.difference(last).inMilliseconds < 120) {
+          return;
+        }
+        _lastItineraryCompassApply = now;
+        final targetRad = heading * math.pi / 180.0;
+        _itineraryCompassSmoothedRad = _lerpAngleRad(
+          _itineraryCompassSmoothedRad,
+          targetRad,
+          0.25,
+        );
+        if (!mounted || !_itineraryCompassFollowing) return;
+        final cam = _mapController.camera;
+        _mapController.moveAndRotate(
+          cam.center,
+          cam.zoom,
+          _itineraryCompassSmoothedRad,
+        );
+        _syncMapRotation(_itineraryCompassSmoothedRad);
+      },
+      onError: (_) {},
+    );
+  }
+
+  void _applyRouteSheetDrag(double deltaY, double maxSheetH, double minSheetH) {
+    if (!mounted || maxSheetH <= 0) return;
+    _routeSheetSnapController?.stop();
+    final currentH =
+        (_routeMapSheetExtentNotifier.value * maxSheetH).clamp(minSheetH, maxSheetH);
+    final newH = (currentH - deltaY).clamp(minSheetH, maxSheetH);
+    _routeMapSheetExtentNotifier.value = newH / maxSheetH;
+  }
+
+  Future<void> _snapRouteSheetExtent(double maxSheetH, double minSheetH) async {
+    if (!mounted || maxSheetH <= 0) return;
+    final minE = (minSheetH / maxSheetH).clamp(0.01, 1.0);
+    final anchors = <double>{minE, _kRouteSheetSnapMidExtent, 1.0}.toList()
+      ..sort();
+    final e = _routeMapSheetExtentNotifier.value;
+    var target = anchors.first;
+    var bestDist = (e - target).abs();
+    for (final a in anchors) {
+      final d = (e - a).abs();
+      if (d < bestDist) {
+        bestDist = d;
+        target = a;
+      }
+    }
+    final start = _routeMapSheetExtentNotifier.value;
+    if ((start - target).abs() < 0.003) return;
+
+    _routeSheetSnapController?.dispose();
+    final ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 260),
+    );
+    _routeSheetSnapController = ctrl;
+    final curved = CurvedAnimation(parent: ctrl, curve: Curves.easeOutCubic);
+    final animation =
+        Tween<double>(begin: start, end: target).animate(curved);
+
+    void tick() {
+      if (!mounted) return;
+      _routeMapSheetExtentNotifier.value = animation.value;
+    }
+
+    ctrl.addListener(tick);
+    try {
+      await ctrl.forward();
+    } finally {
+      if (_routeSheetSnapController == ctrl) {
+        _routeSheetSnapController = null;
+      }
+      ctrl.removeListener(tick);
+      curved.dispose();
+      ctrl.dispose();
+    }
+  }
+
   void _exitRouteSheetToSearch() {
     if (!mounted) return;
-    setState(() => _detailsCollapsed = false);
+    _routeMapSheetExtentNotifier.value = 1.0;
     ref.read(showMapSheetProvider.notifier).state = false;
     ref.read(routeMapOverlaySuppressedProvider.notifier).state = true;
     ref.read(searchMapStateProvider.notifier).clearRouteSheetSelection();
+  }
+
+  bool _routeNeedsGeometry(RouteOption option) {
+    for (final leg in option.legs) {
+      if (leg.geometry.length >= 2) continue;
+      final hasEndpoints = (leg.fromLat != 0 || leg.fromLon != 0) &&
+          (leg.toLat != 0 || leg.toLon != 0);
+      if (hasEndpoints) return true;
+    }
+    return false;
+  }
+
+  Future<RouteOption> _routeOptionWithGeometry(
+    SearchMapState state,
+    RouteOption option,
+    int resultIndex,
+  ) async {
+    if (!_routeNeedsGeometry(option) || state.lastRequest == null) {
+      return option;
+    }
+    final base = state.lastRequest!;
+    final response = await ref.read(routeApiRepositoryProvider).search(
+          RouteSearchRequest(
+            cityId: base.cityId,
+            origin: base.origin,
+            destination: base.destination,
+            serviceDate: base.serviceDate,
+            serviceTime: base.serviceTime,
+            passengerCount: base.passengerCount,
+            offset: resultIndex,
+            limit: 1,
+            includeGeometry: true,
+          ),
+        );
+    if (response.routes.isEmpty) return option;
+    final detailed = response.routes.first;
+    ref.read(searchMapStateProvider.notifier).replaceResultAt(
+          resultIndex,
+          detailed,
+        );
+    return detailed;
+  }
+
+  Future<void> _openRouteDetails(
+    SearchMapState state,
+    RouteOption option,
+    int resultIndex,
+  ) async {
+    _routeMapSheetExtentNotifier.value = _kRouteSheetSnapMidExtent;
+    setState(() => _detailsHighlightedLegIndex = 0);
+    ref.read(routeMapOverlaySuppressedProvider.notifier).state = false;
+    final ctrl = ref.read(searchMapStateProvider.notifier);
+    try {
+      final detailed = await _routeOptionWithGeometry(state, option, resultIndex);
+      if (!mounted) return;
+      ctrl.openDetails(detailed);
+    } catch (_) {
+      if (!mounted) return;
+      ctrl.openDetails(option);
+      showAppSnackBar(
+        context,
+        const SnackBar(
+          content: Text('Could not load route shape. Showing simplified path.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _loadMoreRouteResults(SearchMapState state) async {
+    if (_routeListLoadingMore) return;
+    final ctrl = ref.read(searchMapStateProvider.notifier);
+    if (state.visibleCount < state.results.length) {
+      ctrl.revealMoreResults();
+      return;
+    }
+    if (!state.hasMore && state.results.length >= state.total) {
+      return;
+    }
+    if (state.lastRequest == null) {
+      return;
+    }
+    setState(() => _routeListLoadingMore = true);
+    try {
+      final base = state.lastRequest!;
+      final pageRequest = RouteSearchRequest(
+        cityId: base.cityId,
+        origin: base.origin,
+        destination: base.destination,
+        serviceDate: base.serviceDate,
+        serviceTime: base.serviceTime,
+        passengerCount: base.passengerCount,
+        offset: state.results.length,
+        limit: kRouteSearchPageSize,
+        includeGeometry: base.includeGeometry,
+      );
+      final response =
+          await ref.read(routeApiRepositoryProvider).search(pageRequest);
+      if (!mounted) return;
+      ctrl.appendResults(
+        options: response.routes,
+        offset: response.offset,
+        limit: response.limit,
+        total: response.total,
+        hasMore: response.hasMore,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      showAppSnackBar(
+        context,
+        const SnackBar(content: Text('Could not load more routes. Try again.')),
+      );
+    } finally {
+      if (mounted) setState(() => _routeListLoadingMore = false);
+    }
   }
 
   Future<void> _animateCameraTo({
@@ -293,6 +735,38 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
       ctrl.removeListener(tick);
       ctrl.dispose();
     }
+  }
+
+  void _onShellMapPositionChanged(MapCamera camera, bool hasGesture) {
+    _syncMapRotation(camera.rotation);
+  }
+
+  void _onShellMapTap(TapPosition tapPosition, LatLng latLng) {
+    final selectionTarget = ref.read(mapSelectionTargetProvider);
+    final point =
+        '${latLng.latitude.toStringAsFixed(5)},${latLng.longitude.toStringAsFixed(5)}';
+    if (selectionTarget != null) {
+      ref.read(mapPickedLocationProvider.notifier).state =
+          MapPickedLocation(target: selectionTarget, value: point);
+      ref.read(mapSelectionTargetProvider.notifier).state = null;
+      ref.read(selectedTabProvider.notifier).state = 0;
+      final targetLabel = selectionTarget == LocationSelectionTarget.from
+          ? 'From'
+          : 'To';
+      if (!mounted) return;
+      showAppSnackBar(
+        context,
+        SnackBar(
+          content: Text('Selected map location for $targetLabel'),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    showAppSnackBar(
+        context,
+      SnackBar(content: Text('Selected: $point')),
+    );
   }
 
   void _syncMapRotation(double rotation) {
@@ -378,12 +852,94 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
     return fallback;
   }
 
+  List<Polyline> _buildDetailPolylines(
+    RouteOption selectedOption,
+    int highlightedIndex, {
+    LatLng? fallbackOrigin,
+    LatLng? fallbackDestination,
+  }) {
+    final polylines = <Polyline>[];
+    final legs = selectedOption.legs;
+    for (var i = 0; i < legs.length; i++) {
+      final points = _legPoints(legs[i]);
+      if (points.length < 2) continue;
+      final base = _legColor(legs[i]);
+      final isActive = i == highlightedIndex;
+      final strokeOpacity = isActive
+          ? _kMapRouteStrokeOpacityHighlight
+          : _kMapRouteStrokeOpacityLeg;
+      polylines.add(
+        Polyline(
+          points: points,
+          strokeWidth: isActive ? 7.0 : 5.5,
+          color: base.withValues(alpha: strokeOpacity),
+          borderStrokeWidth: isActive ? 1.6 : 1.35,
+          borderColor: Colors.white.withValues(alpha: isActive ? 0.82 : 0.75),
+        ),
+      );
+    }
+    if (polylines.isEmpty &&
+        fallbackOrigin != null &&
+        fallbackDestination != null) {
+      polylines.add(
+        Polyline(
+          points: [fallbackOrigin, fallbackDestination],
+          strokeWidth: 6.0,
+          color: const Color(0xFF64748B)
+              .withValues(alpha: _kMapRouteStrokeOpacityLeg),
+          borderStrokeWidth: 1.35,
+          borderColor: Colors.white.withValues(alpha: 0.75),
+        ),
+      );
+    }
+    return polylines;
+  }
+
   @override
   Widget build(BuildContext context) {
+    ref.listen<bool>(showMapSheetProvider, (previous, next) {
+      if (previous != true || next != false) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (ref.read(selectedTabProvider) != 0) return;
+        unawaited(
+          _animateCameraTo(
+            center: _fallbackCenter,
+            zoom: _fallbackZoom,
+            rotation: 0,
+            duration: const Duration(milliseconds: 520),
+          ),
+        );
+      });
+    });
+
+    ref.listen<int>(routeSheetExpandFullProvider, (previous, next) {
+      if (previous == next) return;
+      _routeMapSheetExtentNotifier.value = 1.0;
+    });
+
+    ref.listen<SearchMapState>(searchMapStateProvider, (previous, next) {
+      final pending = next.pendingDetailsExtent;
+      if (pending != null &&
+          next.mode == SheetMode.details &&
+          next.selectedOption != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _routeMapSheetExtentNotifier.value = pending;
+          ref.read(searchMapStateProvider.notifier).clearPendingDetailsExtent();
+        });
+      }
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _resyncItineraryCompassFromProviders());
+    });
+    ref.listen<bool>(routeMapOverlaySuppressedProvider, (_, __) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _resyncItineraryCompassFromProviders());
+    });
+
     final state = ref.watch(searchMapStateProvider);
     final ctrl = ref.read(searchMapStateProvider.notifier);
     final showSheet = ref.watch(showMapSheetProvider);
-    final selectedTab = ref.watch(selectedTabProvider);
     final routeOverlaySuppressed = ref.watch(routeMapOverlaySuppressedProvider);
     final showRouteMapOverlay = !routeOverlaySuppressed;
     final originPoint = _parseLatLon(state.lastRequest?.origin ?? '');
@@ -459,6 +1015,15 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
             detailStops: detailStops,
           )
         : null;
+    final detailMapPolylines = effectiveDetails
+        ? _buildDetailPolylines(
+            selectedOption,
+            _detailsHighlightedLegIndex,
+            fallbackOrigin: _parseLatLon(state.lastRequest?.origin ?? ''),
+            fallbackDestination:
+                _parseLatLon(state.lastRequest?.destination ?? ''),
+          )
+        : <Polyline>[];
     if (!isDetailsMode) {
       _lastFittedOptionHash = null;
     }
@@ -482,24 +1047,6 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
     }
     final routeSheetBottomInset = mapSheetStackBottomInset(context);
 
-    // Keep list mode map stable: no auto-fit/zoom while browsing route options.
-    if (!isDetailsMode) {
-      _lastFittedListRequestKey = null;
-    }
-
-    // Returning to Search should always restore city-level framing.
-    if (selectedTab == 0 && !showSheet) {
-      if (!_searchViewResetApplied) {
-        _searchViewResetApplied = true;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _mapController.move(_fallbackCenter, _fallbackZoom);
-          _mapController.rotate(0);
-        });
-      }
-    } else {
-      _searchViewResetApplied = false;
-    }
     return SafeArea(
       top: false,
       bottom: false,
@@ -508,67 +1055,31 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
           const routeSheetTopGap = kShellFloatingNavBottomMargin;
           final routeSheetBottomGap = routeSheetBottomInset;
           final fabStackBottom = routeSheetBottomGap + 20;
+          final routeSlotHeight = math.max(
+            120.0,
+            mapConstraints.maxHeight - routeSheetTopGap - routeSheetBottomGap,
+          );
+          final minSheetH = math.max(
+            84.0,
+            routeSlotHeight * _kRouteSheetMinExtent,
+          );
+          final maxSheetH = routeSlotHeight;
 
           return Stack(
             children: [
           FlutterMap(
             mapController: _mapController,
-            options: MapOptions(
-              initialCenter: _fallbackCenter,
-              initialZoom: _fallbackZoom,
-              onPositionChanged: (camera, hasGesture) {
-                _syncMapRotation(camera.rotation);
-              },
-              onTap: (_, latLng) {
-                final selectionTarget = ref.read(mapSelectionTargetProvider);
-                final point =
-                    '${latLng.latitude.toStringAsFixed(5)},${latLng.longitude.toStringAsFixed(5)}';
-                if (selectionTarget != null) {
-                  ref.read(mapPickedLocationProvider.notifier).state =
-                      MapPickedLocation(target: selectionTarget, value: point);
-                  ref.read(mapSelectionTargetProvider.notifier).state = null;
-                  ref.read(selectedTabProvider.notifier).state = 0;
-                  final targetLabel =
-                      selectionTarget == LocationSelectionTarget.from
-                          ? 'From'
-                          : 'To';
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Selected map location for $targetLabel'),
-                    ),
-                  );
-                  return;
-                }
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Selected: $point')),
-                );
-              },
-            ),
+            options: _shellMapOptions,
             children: [
               TileLayer(
+                key: const ValueKey<Object>('rotransit_osm_tiles'),
                 urlTemplate: _tileUrl,
                 userAgentPackageName: 'com.example.rotransit_frontend',
-                tileProvider: _cacheReady
-                    ? FMTCTileProvider(
-                        stores: {
-                          _store.storeName:
-                              BrowseStoreStrategy.readUpdateCreate,
-                        },
-                      )
-                    : NetworkTileProvider(),
+                tileProvider: _fmtcTileProvider ?? _networkTileProvider,
               ),
-              if (effectiveDetails && detailLegPolylines.isNotEmpty)
+              if (detailMapPolylines.isNotEmpty)
                 PolylineLayer(
-                  polylines: [
-                    for (final leg in detailLegPolylines)
-                      Polyline(
-                        points: leg.points,
-                        strokeWidth: 6,
-                        color: _legColor(leg.leg),
-                        borderStrokeWidth: 1.5,
-                        borderColor: Colors.white.withValues(alpha: 0.8),
-                      ),
-                  ],
+                  polylines: detailMapPolylines,
                 ),
               if (effectiveDetails && detailStopPoints.isNotEmpty)
                 MarkerLayer(
@@ -682,102 +1193,123 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
                 ),
             ],
           ),
-          if (!showSheet && selectedTab != 0)
-            Positioned(
-              right: 14,
-              bottom: fabStackBottom,
-              child: Column(
-                children: [
-                  _MapControlButton(
-                    icon: Icons.my_location_rounded,
-                    onPressed: _centerOnUser,
-                  ),
-                  const SizedBox(height: 10),
-                  _MapControlButton(
-                    onPressed: _resetNorth,
-                    tooltip: 'Rotate map to north',
-                    child: _CompassFabFace(mapRotationDeg: _mapRotation),
-                  ),
-                ],
-              ),
-            ),
-          if (showSheet)
-            if (state.mode == SheetMode.details && state.selectedOption != null)
-              Positioned(
-                left: kShellFloatingNavHorizontalMargin,
-                right: kShellFloatingNavHorizontalMargin,
-                top: routeSheetTopGap,
-                bottom: _detailsCollapsed ? null : routeSheetBottomGap,
-                child: Material(
-                  elevation: 4,
-                  shadowColor: Colors.black26,
-                  color: Theme.of(context).colorScheme.surface,
-                  borderRadius:
-                      BorderRadius.circular(kMapRouteSheetCornerRadius),
-                  clipBehavior: Clip.antiAlias,
-                  child: _RouteDetailsPanel(
-                    cityId: state.cityId,
-                    option: state.selectedOption!,
-                    isCollapsed: _detailsCollapsed,
-                    onToggleCollapsed: () {
-                      setState(() => _detailsCollapsed = !_detailsCollapsed);
-                    },
-                    onBack: () {
-                      setState(() => _detailsCollapsed = false);
-                      ctrl.backToList();
-                    },
-                  ),
+          Consumer(
+            builder: (context, ref, _) {
+              final sheet = ref.watch(showMapSheetProvider);
+              final tab = ref.watch(selectedTabProvider);
+              if (sheet || tab == 0) return const SizedBox.shrink();
+              return Positioned(
+                right: 14,
+                bottom: fabStackBottom,
+                child: Column(
+                  children: [
+                    _MapControlButton(
+                      icon: Icons.my_location_rounded,
+                      onPressed: _centerOnUser,
+                    ),
+                    const SizedBox(height: 10),
+                    _MapControlButton(
+                      onPressed: _resetNorth,
+                      tooltip: 'Rotate map to north',
+                      child: _CompassFabFace(mapRotationDeg: _mapRotation),
+                    ),
+                  ],
                 ),
+              );
+            },
+          ),
+          if (showSheet)
+            if (state.mode == SheetMode.details &&
+                state.selectedOption != null)
+              ValueListenableBuilder<double>(
+                valueListenable: _routeMapSheetExtentNotifier,
+                builder: (context, extent, _) {
+                  final routeSheetH =
+                      (extent * maxSheetH).clamp(minSheetH, maxSheetH);
+                  void onRouteSheetDrag(double dy) =>
+                      _applyRouteSheetDrag(dy, maxSheetH, minSheetH);
+                  void onRouteSheetDragEnd() => unawaited(
+                        _snapRouteSheetExtent(maxSheetH, minSheetH),
+                      );
+                  return Positioned(
+                    left: kShellFloatingNavHorizontalMargin,
+                    right: kShellFloatingNavHorizontalMargin,
+                    bottom: routeSheetBottomGap,
+                    height: routeSheetH,
+                    child: Material(
+                      elevation: 4,
+                      shadowColor: Theme.of(context).colorScheme.shadow,
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius:
+                          BorderRadius.circular(kMapRouteSheetCornerRadius),
+                      clipBehavior: Clip.antiAlias,
+                      child: _RouteDetailsPanel(
+                        cityId: state.cityId,
+                        option: state.selectedOption!,
+                        sheetHeight: routeSheetH,
+                        onSheetDragDelta: onRouteSheetDrag,
+                        onSheetDragEnd: onRouteSheetDragEnd,
+                        highlightedLegIndex: _detailsHighlightedLegIndex,
+                        onLegHighlightChanged: (index) {
+                          setState(() => _detailsHighlightedLegIndex = index);
+                        },
+                        showSaveToFavorites: !state.openedFromSavedFavorite,
+                        onBack: () {
+                          if (state.openedFromSavedFavorite) {
+                            _routeMapSheetExtentNotifier.value = 1.0;
+                            ref.read(showMapSheetProvider.notifier).state =
+                                false;
+                            ctrl.closeFavoriteMapPreview();
+                            ref.read(selectedTabProvider.notifier).state = 2;
+                          } else {
+                            _routeMapSheetExtentNotifier.value = 1.0;
+                            ctrl.backToList();
+                          }
+                        },
+                      ),
+                    ),
+                  );
+                },
               )
             else
               Positioned(
                 left: kShellFloatingNavHorizontalMargin,
                 right: kShellFloatingNavHorizontalMargin,
-                top: routeSheetTopGap,
                 bottom: routeSheetBottomGap,
+                height: maxSheetH,
                 child: Material(
                   elevation: 4,
-                  shadowColor: Colors.black26,
+                  shadowColor: Theme.of(context).colorScheme.shadow,
                   color: Theme.of(context).colorScheme.surface,
                   borderRadius:
                       BorderRadius.circular(kMapRouteSheetCornerRadius),
                   clipBehavior: Clip.antiAlias,
                   child: _RouteListPanel(
                     onReturnToSearch: _exitRouteSheetToSearch,
+                    onSheetDragDelta: (_) {},
+                    allowSheetResize: false,
                     options: state.results
                         .take(state.visibleCount)
                         .toList(),
-                    canLoadMore: state.results.length < state.total,
-                    onLoadMore: () async {
-                      final request = state.lastRequest;
-                      if (request == null) return;
-                      final response = await ref
-                          .read(routeApiRepositoryProvider)
-                          .search(
-                            RouteSearchRequest(
-                              cityId: request.cityId,
-                              origin: request.origin,
-                              destination: request.destination,
-                              serviceDate: request.serviceDate,
-                              serviceTime: request.serviceTime,
-                              passengerCount: request.passengerCount,
-                              offset: state.results.length,
-                              limit: request.limit,
-                            ),
-                          );
-                      ctrl.appendResults(
-                        options: response.routes,
-                        offset: response.offset,
-                        limit: response.limit,
-                        total: response.total,
-                      );
-                    },
-                    onTapOption: (option) {
-                      setState(() => _detailsCollapsed = false);
-                      ref
-                          .read(routeMapOverlaySuppressedProvider.notifier)
-                          .state = false;
-                      ctrl.openDetails(option);
+                    canLoadMore: state.hasMore ||
+                        state.visibleCount < state.results.length,
+                    remainingToReveal: () {
+                      final local =
+                          state.results.length - state.visibleCount;
+                      if (local > 0) return local;
+                      if (state.hasMore) {
+                        return kRouteSearchPageSize;
+                      }
+                      return state.total - state.results.length;
+                    }(),
+                    remainingOnServer: state.hasMore &&
+                            state.total <= state.results.length
+                        ? 0
+                        : state.total - state.results.length,
+                    isLoadingMore: _routeListLoadingMore,
+                    onLoadMore: () => _loadMoreRouteResults(state),
+                    onTapOption: (option, resultIndex) {
+                      unawaited(_openRouteDetails(state, option, resultIndex));
                     },
                     scrollController: _routeListScrollController,
                   ),
@@ -806,14 +1338,17 @@ class _MapControlButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final extra = context.extraColors;
     return Material(
-      color: const Color(0xFF0058D8),
+      color: extra.mapFabBackground,
       shape: const CircleBorder(),
       elevation: 4,
+      shadowColor: Theme.of(context).colorScheme.shadow,
       child: IconButton(
         tooltip: tooltip,
         onPressed: onPressed,
-        icon: child ?? Icon(icon, color: Colors.white),
+        icon: child ??
+            Icon(icon, color: Theme.of(context).colorScheme.onPrimary),
       ),
     );
   }
@@ -866,7 +1401,7 @@ class _RouteOptionCardState extends State<_RouteOptionCard> {
       duration: const Duration(milliseconds: 120),
       curve: Curves.easeOut,
       child: Card(
-        margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+        margin: const EdgeInsets.fromLTRB(12, 6, 12, 0),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
           onTapDown: (_) => setState(() => _pressed = true),
@@ -883,23 +1418,37 @@ class _RouteOptionCardState extends State<_RouteOptionCard> {
 class _RouteListPanel extends StatelessWidget {
   const _RouteListPanel({
     required this.onReturnToSearch,
+    required this.onSheetDragDelta,
+    this.allowSheetResize = true,
     required this.options,
     required this.canLoadMore,
+    required this.remainingToReveal,
+    this.remainingOnServer = 0,
+    this.isLoadingMore = false,
     required this.onLoadMore,
     required this.onTapOption,
     required this.scrollController,
   });
 
   final VoidCallback onReturnToSearch;
+  final ValueChanged<double> onSheetDragDelta;
+  final bool allowSheetResize;
   final List<RouteOption> options;
   final bool canLoadMore;
+  /// Itineraries still hidden locally or in the next fetch batch.
+  final int remainingToReveal;
+  /// Itineraries not yet fetched from the backend (for “N left” copy).
+  final int remainingOnServer;
+  final bool isLoadingMore;
   final Future<void> Function() onLoadMore;
-  final void Function(RouteOption option) onTapOption;
+  final void Function(RouteOption option, int resultIndex) onTapOption;
   final ScrollController scrollController;
 
   @override
   Widget build(BuildContext context) {
-    final itemCount = options.isEmpty ? 2 : options.length + 2;
+    final itemCount = options.isEmpty
+        ? 1
+        : options.length + (canLoadMore ? 1 : 0);
     final fastestMinutes = options.isEmpty
         ? 0
         : options
@@ -909,41 +1458,31 @@ class _RouteListPanel extends StatelessWidget {
         ? 0
         : options.map((o) => o.walkDistanceMeters).reduce(math.min);
 
-    return ListView.builder(
-      controller: scrollController,
-      itemCount: itemCount,
-      itemBuilder: (context, index) {
-        if (index == 0) {
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(4, 2, 8, 4),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _RouteSheetDragHandle(
+          onDragDelta: onSheetDragDelta,
+          allowDrag: allowSheetResize,
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+          child: Row(
+            children: [
+              _mapSheetBackIconButton(
+                context: context,
                 onPressed: onReturnToSearch,
-                style: TextButton.styleFrom(
-                  foregroundColor: const Color(0xFF0A3E96),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.arrow_back, size: 20),
-                    SizedBox(width: 4),
-                    Text(
-                      'Return to search',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 14.5,
-                      ),
-                    ),
-                  ],
-                ),
               ),
-            ),
-          );
-        }
+              const Spacer(),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.builder(
+            controller: scrollController,
+            padding: EdgeInsets.zero,
+            itemCount: itemCount,
+            itemBuilder: (context, index) {
         if (options.isEmpty) {
           return const Padding(
             padding: EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -952,17 +1491,37 @@ class _RouteListPanel extends StatelessWidget {
             ),
           );
         }
-        if (index == options.length + 1) {
-          if (!canLoadMore) return const SizedBox(height: 12);
+        if (canLoadMore && index == options.length) {
+          final batch =
+              math.min(kRouteSearchPageSize, remainingToReveal);
+          final String label;
+          if (isLoadingMore) {
+            label = 'Loading…';
+          } else if (remainingOnServer > 0) {
+            final tripWord = batch == 1 ? 'trip' : 'trips';
+            label = batch >= kRouteSearchPageSize
+                ? 'Load $kRouteSearchPageSize more ($remainingOnServer left)'
+                : 'Load $batch more $tripWord ($remainingOnServer left)';
+          } else {
+            label = batch >= kRouteSearchPageSize
+                ? 'Load next $kRouteSearchPageSize trips'
+                : 'Load $batch more ${batch == 1 ? 'trip' : 'trips'}';
+          }
           return Padding(
             padding: const EdgeInsets.all(12),
             child: OutlinedButton(
-              onPressed: () => onLoadMore(),
-              child: const Text('Load next 10 options'),
+              onPressed: isLoadingMore ? null : () => onLoadMore(),
+              child: isLoadingMore
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(label),
             ),
           );
         }
-        final item = options[index - 1];
+        final item = options[index];
         final start = item.legs.isEmpty
             ? null
             : DateTime.fromMillisecondsSinceEpoch(item.legs.first.startTime);
@@ -971,19 +1530,14 @@ class _RouteListPanel extends StatelessWidget {
             : DateTime.fromMillisecondsSinceEpoch(item.legs.last.endTime);
         final timeFmt = DateFormat('h:mm a');
         final minutes = (item.durationSeconds / 60).round();
-        final transitLegs = _transitLegs(item);
-        final transitSummary = _buildTransitSummary(transitLegs);
         final isFastest = minutes == fastestMinutes;
         final isShortestWalk = item.walkDistanceMeters == shortestWalk;
         final hasExtraWalk = item.walkDistanceMeters > shortestWalk;
-        final surface = Theme.of(context).colorScheme.surface;
-        final durationBg = Color.alphaBlend(
-          const Color(0xFF64748B).withValues(alpha: 0.065),
-          surface,
-        );
+        final scheme = Theme.of(context).colorScheme;
+        final extra = context.extraColors;
 
         return _RouteOptionCard(
-          onTap: () => onTapOption(item),
+          onTap: () => onTapOption(item, index),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 18, 12, 20),
             child: Column(
@@ -1000,50 +1554,14 @@ class _RouteListPanel extends StatelessWidget {
                             start == null || end == null
                                 ? '--'
                                 : '${timeFmt.format(start)} - ${timeFmt.format(end)}',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontWeight: FontWeight.w800,
                               fontSize: 21,
+                              color: scheme.onSurface,
                             ),
                           ),
                           const SizedBox(height: 7),
-                          if (transitSummary.isEmpty)
-                            Text(
-                              'Walking route',
-                              style: TextStyle(
-                                fontSize: 14.5,
-                                fontWeight: FontWeight.w600,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
-                            )
-                          else
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: _kRouteStepRunSpacing,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                for (var i = 0; i < transitSummary.length; i++) ...[
-                                  _TransitStepChip(
-                                    item: transitSummary[i],
-                                    surface: surface,
-                                  ),
-                                  if (i < transitSummary.length - 1)
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 2,
-                                      ),
-                                      child: Text(
-                                        '→',
-                                        style: const TextStyle(
-                                          fontSize: 17,
-                                          fontWeight: FontWeight.w700,
-                                          height: 1,
-                                          color: Colors.black,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ],
-                            ),
+                          _TransitSummaryChipsRow(option: item),
                           const SizedBox(height: 8),
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
@@ -1057,17 +1575,15 @@ class _RouteListPanel extends StatelessWidget {
                               ),
                               const SizedBox(width: _kMetaIconTextGap),
                               Text(
-                                '${item.walkDistanceMeters} m',
+                                formatDistanceForDisplay(
+                                  item.walkDistanceMeters.toDouble(),
+                                ),
                                 style: TextStyle(
                                   color: hasExtraWalk
-                                      ? const Color(0xFF8A6D55)
-                                          .withValues(alpha: 0.85)
+                                      ? extra.walkExtraColor
                                       : isShortestWalk
-                                          ? const Color(0xFF3E7A59)
-                                              .withValues(alpha: 0.85)
-                                          : Theme.of(
-                                              context,
-                                            ).colorScheme.onSurfaceVariant,
+                                          ? extra.walkBestColor
+                                          : scheme.onSurfaceVariant,
                                   fontWeight: FontWeight.w400,
                                   fontSize: 13,
                                 ),
@@ -1118,7 +1634,7 @@ class _RouteListPanel extends StatelessWidget {
                       children: [
                         DecoratedBox(
                           decoration: BoxDecoration(
-                            color: durationBg,
+                            color: extra.durationBadgeBackground,
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Padding(
@@ -1133,11 +1649,8 @@ class _RouteListPanel extends StatelessWidget {
                                 fontWeight: FontWeight.w500,
                                 fontSize: 11.5,
                                 color: isFastest
-                                    ? const Color(0xFF3D7A52)
-                                        .withValues(alpha: 0.88)
-                                    : Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant
+                                    ? extra.durationBestColor
+                                    : scheme.onSurfaceVariant
                                         .withValues(alpha: 0.78),
                               ),
                             ),
@@ -1147,9 +1660,10 @@ class _RouteListPanel extends StatelessWidget {
                         Text(
                           '${item.estimatedPriceLei} lei',
                           textAlign: TextAlign.right,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontWeight: FontWeight.w700,
                             fontSize: 15,
+                            color: scheme.onSurface,
                           ),
                         ),
                       ],
@@ -1160,7 +1674,10 @@ class _RouteListPanel extends StatelessWidget {
             ),
           ),
         );
-      },
+            },
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1169,247 +1686,331 @@ class _RouteDetailsPanel extends ConsumerWidget {
   const _RouteDetailsPanel({
     required this.cityId,
     required this.option,
-    required this.isCollapsed,
-    required this.onToggleCollapsed,
+    required this.sheetHeight,
+    required this.onSheetDragDelta,
+    this.onSheetDragEnd,
+    required this.highlightedLegIndex,
+    required this.onLegHighlightChanged,
     required this.onBack,
+    this.showSaveToFavorites = true,
   });
 
   final String cityId;
   final RouteOption option;
-  final bool isCollapsed;
-  final VoidCallback onToggleCollapsed;
+  final double sheetHeight;
+  final ValueChanged<double> onSheetDragDelta;
+  final VoidCallback? onSheetDragEnd;
+  final int highlightedLegIndex;
+  final ValueChanged<int> onLegHighlightChanged;
   final VoidCallback onBack;
+  final bool showSaveToFavorites;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final timeFmt = DateFormat('h:mm a');
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    final scheme = Theme.of(context).colorScheme;
+    final legs = option.legs;
+    final safeHighlight = legs.isEmpty
+        ? 0
+        : math.min(legs.length - 1, math.max(0, highlightedLegIndex));
+    final showItineraryBody = sheetHeight >= _kDetailsSheetBodyMinHeight;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _RouteSheetDragHandle(
+          onDragDelta: onSheetDragDelta,
+          onDragEnd: onSheetDragEnd,
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 16, 8),
+          child: Row(
             children: [
-              IconButton(onPressed: onBack, icon: const Icon(Icons.arrow_back)),
-              const Expanded(
-                child: Text(
-                  'Trip details',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
-                ),
-              ),
-              FilledButton.tonalIcon(
-                style: FilledButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 8,
-                  ),
-                ),
-                onPressed: onToggleCollapsed,
-                icon: Icon(
-                  isCollapsed
-                      ? Icons.keyboard_arrow_down_rounded
-                      : Icons.keyboard_arrow_up_rounded,
-                ),
-                label: Text(isCollapsed ? 'Show list' : 'Hide list'),
-              ),
+              _mapSheetBackIconButton(context: context, onPressed: onBack),
             ],
           ),
-          if (!isCollapsed)
-            Expanded(
-              child: SingleChildScrollView(
-                child: Column(
+        ),
+        if (showItineraryBody)
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SizedBox(height: 2),
                     Text(
-                      '${(option.durationSeconds / 60).round()} min • ${option.transfers} transfers',
+                      '${(option.durationSeconds / 60).round()} min',
                       style: TextStyle(
-                        fontSize: 16,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w600,
+                        fontSize: 32,
+                        fontWeight: FontWeight.w800,
+                        height: 1.1,
+                        color: scheme.onSurface,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    if (_transitLegs(option).isNotEmpty) ...[
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 8,
-                        children: [
-                          for (final leg in _transitLegs(option))
-                            _LegBadge(leg: leg),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 10),
+                    _TransitSummaryChipsRow(option: option),
+                    const SizedBox(height: 8),
                     Text(
-                      '${option.estimatedPriceLei} lei',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w700,
+                      '${option.transfers} transfer${option.transfers == 1 ? '' : 's'} • ${option.estimatedPriceLei} lei',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: scheme.onSurfaceVariant.withValues(alpha: 0.92),
                       ),
                     ),
-                    if (option.fareRule.isNotEmpty)
+                    if (option.fareRule.isNotEmpty) ...[
+                      const SizedBox(height: 4),
                       Text(
                         option.fareRule,
                         style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          color: scheme.onSurfaceVariant,
                           fontSize: 12,
                         ),
                       ),
-                    const SizedBox(height: 12),
-                    const Text('Steps', style: TextStyle(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 8),
-                    for (final leg in option.legs) ...[
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surfaceContainerLow,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .outline
-                                .withValues(alpha: 0.2),
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                _modeIcon(leg.mode),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _legBadgeLabel(leg),
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                    ],
+                    if (showSaveToFavorites) ...[
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.tonal(
+                          onPressed: () async {
+                            await ref
+                                .read(saveRouteControllerProvider)
+                                .save(cityId: cityId, option: option);
+                            if (context.mounted) {
+                              showAppSnackBar(
+        context,
+                                const SnackBar(
+                                  content: Text('Added to favorites'),
                                 ),
-                                const Spacer(),
-                                Text(
-                                  '${timeFmt.format(DateTime.fromMillisecondsSinceEpoch(leg.startTime))} - ${timeFmt.format(DateTime.fromMillisecondsSinceEpoch(leg.endTime))}',
-                                  style: TextStyle(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              leg.fromName,
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 4),
-                              child: Text(
-                                'to ${leg.toName}',
-                                style: TextStyle(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                                ),
-                              ),
-                            ),
-                            Text(
-                              '${leg.distance.toStringAsFixed(0)} m',
-                              style: TextStyle(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                            ),
-                          ],
+                              );
+                            }
+                          },
+                          child: const Text('Add to favorites'),
                         ),
                       ),
                     ],
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: () async {
-                          await ref
-                              .read(saveRouteControllerProvider)
-                              .save(cityId: cityId, option: option);
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Added to favorites')),
-                            );
-                          }
-                        },
-                        child: const Text('ADD TO FAVORITES'),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Steps',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                        color: scheme.onSurfaceVariant,
                       ),
                     ),
+                    const SizedBox(height: 8),
+                    for (var i = 0; i < legs.length; i++)
+                      _RouteTimelineLegRow(
+                        leg: legs[i],
+                        isHighlighted: i == safeHighlight,
+                        timeFmt: timeFmt,
+                        onTap: () => onLegHighlightChanged(i),
+                      ),
                   ],
                 ),
               ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _modeIcon(String mode) {
-    final normalized = mode.toUpperCase();
-    final icon = switch (normalized) {
-      'BUS' => Icons.directions_bus,
-      'TRAM' => Icons.tram,
-      'RAIL' => Icons.train,
-      'SUBWAY' => Icons.subway,
-      _ => Icons.directions_walk,
-    };
-    return Icon(icon, size: 18);
-  }
-}
-
-class _LegBadge extends StatelessWidget {
-  const _LegBadge({required this.leg});
-
-  final RouteLeg leg;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 9,
-          height: 9,
-          decoration: BoxDecoration(
-            color: _legColor(leg),
-            shape: BoxShape.circle,
-          ),
-        ),
-        const SizedBox(width: 5),
-        Text(
-          _legBadgeLabel(leg),
-          style: TextStyle(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+            )
+        else
+          const Spacer(),
       ],
     );
   }
 }
 
-class _TransitStepChip extends StatelessWidget {
-  const _TransitStepChip({
-    required this.item,
-    required this.surface,
+/// Primary title for a step: mode name + line pill using the same [Color] as the map leg.
+Widget _transitLineTitleRow(RouteLeg leg, ColorScheme scheme) {
+  final lineId = _lineIdFromRouteId(leg.routeId);
+  if (_isTransitLeg(leg) && lineId.isNotEmpty) {
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 6,
+      children: [
+        Text(
+          _modeLabel(leg.mode),
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            fontSize: 16,
+            color: scheme.onSurface,
+          ),
+        ),
+        _RouteLineNumberPill(lineId: lineId, routeColor: _legColor(leg)),
+      ],
+    );
+  }
+  return Text(
+    _legBadgeLabel(leg),
+    style: TextStyle(
+      fontWeight: FontWeight.w700,
+      fontSize: 16,
+      color: scheme.onSurface,
+    ),
+  );
+}
+
+class _RouteTimelineLegRow extends StatelessWidget {
+  const _RouteTimelineLegRow({
+    required this.leg,
+    required this.isHighlighted,
+    required this.timeFmt,
+    required this.onTap,
   });
 
+  final RouteLeg leg;
+  final bool isHighlighted;
+  final DateFormat timeFmt;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final variant = scheme.onSurfaceVariant;
+    final start = DateTime.fromMillisecondsSinceEpoch(leg.startTime);
+    final end = DateTime.fromMillisecondsSinceEpoch(leg.endTime);
+    final meta =
+        '${timeFmt.format(start)} – ${timeFmt.format(end)}   •   ${formatDistanceForDisplay(leg.distance)}';
+    final cardRadius = BorderRadius.circular(12);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: isHighlighted
+              ? scheme.primaryContainer.withValues(alpha: 0.32)
+              : scheme.surface,
+          borderRadius: cardRadius,
+          border: isHighlighted
+              ? Border.all(
+                  color: scheme.primary.withValues(alpha: 0.28),
+                  width: 1,
+                )
+              : null,
+          boxShadow: _itineraryStepCardShadow(scheme),
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: cardRadius,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: cardRadius,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    '●',
+                    style: TextStyle(
+                      fontSize: 10,
+                      height: 1.2,
+                      color: isHighlighted
+                          ? scheme.primary
+                          : (_isTransitLeg(leg)
+                              ? _itineraryAccentColor(_legColor(leg))
+                              : variant.withValues(alpha: 0.65)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _modeIconForMode(leg.mode, size: 20),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _transitLineTitleRow(leg, scheme),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '${leg.fromName} → ${leg.toName}',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: variant.withValues(alpha: 0.88),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        meta,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w400,
+                          color: variant.withValues(alpha: 0.75),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      ),
+    );
+  }
+}
+
+/// Line number badge: solid [routeColor] matches map polyline for that leg.
+class _RouteLineNumberPill extends StatelessWidget {
+  const _RouteLineNumberPill({
+    required this.lineId,
+    required this.routeColor,
+  });
+
+  final String lineId;
+  final Color routeColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _itineraryAccentColor(routeColor);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: c,
+        borderRadius: BorderRadius.circular(_kPillRadius),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.5),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: _kPillPadding,
+        child: Text(
+          lineId,
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: _kPillLineFontSize,
+            letterSpacing: 0.2,
+            color: _onRouteColorInk(c),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TransitStepChip extends StatelessWidget {
+  const _TransitStepChip({required this.item});
+
   final _TransitSummaryItem item;
-  final Color surface;
 
   @override
   Widget build(BuildContext context) {
     final variant = Theme.of(context).colorScheme.onSurfaceVariant;
+    final c = item.routeColor;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1423,23 +2024,7 @@ class _TransitStepChip extends StatelessWidget {
         ),
         if (item.lineId.isNotEmpty) ...[
           const SizedBox(width: 6),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: _transitModePillBackground(item.modeRaw, surface),
-              borderRadius: BorderRadius.circular(_kPillRadius),
-            ),
-            child: Padding(
-              padding: _kPillPadding,
-              child: Text(
-                item.lineId,
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: _kPillLineFontSize,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-            ),
-          ),
+          _RouteLineNumberPill(lineId: item.lineId, routeColor: c),
         ],
       ],
     );

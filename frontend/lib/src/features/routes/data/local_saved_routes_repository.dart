@@ -26,6 +26,11 @@ class LocalSavedRoutesRepository {
     });
   }
 
+  Future<void> deleteByLocalId(int id) async {
+    final db = await LocalDb.instance();
+    await db.delete('saved_routes', where: 'id = ?', whereArgs: [id]);
+  }
+
   Future<List<SavedJourneyVm>> getJourneys(String deviceUserId) async {
     final db = await LocalDb.instance();
     final rows = await db.query(

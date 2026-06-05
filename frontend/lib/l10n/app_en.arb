@@ -1,0 +1,114 @@
+{
+  "@@locale": "en",
+
+  "appTitle": "RoTransit",
+
+  "navSearch": "Search",
+  "navBus": "Bus",
+  "navFavorites": "Favorites",
+  "navSettings": "Settings",
+
+  "settingsTitle": "Settings",
+  "city": "City",
+  "notifications": "Notifications",
+  "darkMode": "Dark mode",
+  "teTransport": "TE transport",
+  "language": "Language",
+  "languageEnglish": "English",
+  "languageRomanian": "Romanian",
+  "languageGerman": "German",
+
+  "offlineTimetables": "Offline timetables",
+  "offlineOnDevicePack": "On-device pack: {version}",
+  "@offlineOnDevicePack": {
+    "placeholders": {
+      "version": { "type": "String" }
+    }
+  },
+  "offlineServerMeta": "Server meta (for updates): {meta}",
+  "@offlineServerMeta": {
+    "placeholders": {
+      "meta": { "type": "String" }
+    }
+  },
+  "offlineUpdatingBackground": "Downloading timetables…",
+  "offlineDownloadProgressPercent": "Downloading… {percent}%",
+  "@offlineDownloadProgressPercent": {
+    "placeholders": {
+      "percent": { "type": "int" }
+    }
+  },
+  "offlineDownloadEtaMinutes": "~{count} min left",
+  "@offlineDownloadEtaMinutes": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "offlineDownloadEtaSeconds": "~{count} sec left",
+  "@offlineDownloadEtaSeconds": {
+    "placeholders": {
+      "count": { "type": "int" }
+    }
+  },
+  "offlineDownloadReceived": "Downloaded {size}…",
+  "@offlineDownloadReceived": {
+    "placeholders": {
+      "size": { "type": "String" }
+    }
+  },
+  "offlineDownloadSaving": "Saving timetables on device…",
+  "offlineDownloadReceivedWithElapsed": "Downloaded {size} · {seconds} sec",
+  "@offlineDownloadReceivedWithElapsed": {
+    "placeholders": {
+      "size": { "type": "String" },
+      "seconds": { "type": "int" }
+    }
+  },
+  "offlinePackNotAvailablePreview": "Not available in preview mode",
+  "offlinePackChooseCityFirst": "Choose a city first",
+  "offlinePackNoneYet": "Not downloaded",
+  "offlineMetaEndpointMissing": "Not available — deploy GET /api/buses/offline-pack-meta on the server",
+  "timetableDownloadSourceBus": "Bus timetables",
+  "timetableDownloadConfirmTitle": "Download timetables?",
+  "timetableDownloadConfirmMessage": "Download offline bus timetables for {cityName}? This may use mobile data.",
+  "@timetableDownloadConfirmMessage": {
+    "placeholders": {
+      "cityName": { "type": "String" }
+    }
+  },
+  "timetableDownloadAction": "Download",
+  "timetableDownloadSuccess": "Timetables downloaded for {cityName}",
+  "@timetableDownloadSuccess": {
+    "placeholders": {
+      "cityName": { "type": "String" }
+    }
+  },
+  "timetableDownloadFailed": "Could not download timetables",
+  "timetableDownloadOffline": "Connect to the internet to download timetables",
+
+  "busTabTimetablesNotDownloadedTitle": "Timetables not downloaded",
+  "busTabTimetablesNotDownloadedBody": "Download bus timetables for this city in Settings to browse lines and schedules.",
+  "busTabOpenSettings": "Go to Settings",
+
+  "version": "Version",
+  "privacyPolicy": "Privacy policy",
+  "termsOfUse": "Terms of use",
+  "help": "Help",
+  "contactUs": "Contact us",
+
+  "countryLabel": "Country: {country}",
+  "@countryLabel": {
+    "placeholders": {
+      "country": { "type": "String" }
+    }
+  },
+  "cityChangedTo": "City changed to {name}",
+  "@cityChangedTo": {
+    "placeholders": {
+      "name": { "type": "String" }
+    }
+  },
+  "cityUnavailable": "Unavailable",
+
+  "pressBackAgainToExit": "Press back again quickly to exit the app"
+}

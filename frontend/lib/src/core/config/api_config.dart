@@ -9,4 +9,10 @@ class ApiConfig {
     'USE_BACKEND',
     defaultValue: true,
   );
+
+  // Keep resolve-for-route disabled on the hot path unless explicitly enabled.
+  static const resolveAmbiguousDestination = bool.fromEnvironment(
+    'RESOLVE_AMBIGUOUS_DESTINATION',
+    defaultValue: false,
+  );
 }

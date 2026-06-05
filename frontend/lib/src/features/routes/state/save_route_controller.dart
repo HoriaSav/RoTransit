@@ -21,17 +21,18 @@ class SaveRouteController {
   Future<void> save({
     required String cityId,
     required RouteOption option,
-    String label = 'Bookmarked trip',
+    String? label,
   }) async {
     final user = _ref.read(sessionProvider);
     final deviceUserId = user?.id ?? _guestDeviceUserId;
+    final resolvedLabel = label ?? routeJourneyTitle(option);
 
     final metadata = encodeRouteMetadata(option);
     await _ref.read(localSavedRoutesRepositoryProvider).save(
           deviceUserId: deviceUserId,
           cityId: cityId,
           routeMetadata: metadata,
-          label: label,
+          label: resolvedLabel,
         );
     _ref.invalidate(savedJourneysProvider);
 
@@ -42,7 +43,7 @@ class SaveRouteController {
       'deviceUserId': deviceUserId,
       'cityId': cityId,
       'routeMetadata': metadata,
-      'label': label,
+      'label': resolvedLabel,
     };
 
     final connectivity = await Connectivity().checkConnectivity();
@@ -58,7 +59,7 @@ class SaveRouteController {
             deviceUserId: deviceUserId,
             cityId: cityId,
             routeMetadata: metadata,
-            label: label,
+            label: resolvedLabel,
           );
     } catch (_) {
       await _ref
