@@ -2,6 +2,7 @@ package com.rotransit.backend.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -158,19 +159,25 @@ class TransitCatalogControllerIntegrationTest {
             "INSERT INTO gtfs_stop_times (city_id, trip_id, stop_id, stop_sequence, arrival_time, departure_time) VALUES ('efefefef-efef-efef-efef-efefefefefef','TRIP:2','STOP:1',1,'08:25:00','08:25:00')"
     })
     void offlinePackReturnsBusesStopsAndTimetables() throws Exception {
-        mockMvc.perform(get("/api/buses/offline-pack")
+        var result = mockMvc.perform(get("/api/buses/offline-pack")
                         .queryParam("cityId", "efefefef-efef-efef-efef-efefefefefef")
                         .queryParam("anchorMonday", "2026-04-06"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.cityId").value("efefefef-efef-efef-efef-efefefefefef"))
-                .andExpect(jsonPath("$.anchorMonday").value("2026-04-06"))
-                .andExpect(jsonPath("$.packVersion").isString())
-                .andExpect(jsonPath("$.buses.length()").value(1))
-                .andExpect(jsonPath("$.routeStops.length()").value(1))
-                .andExpect(jsonPath("$.routeStops[0].directionId").value("0"))
-                .andExpect(jsonPath("$.timetables.length()").value(3))
-                .andExpect(jsonPath("$.timetables[0].dayKind").value("MONFRI"))
-                .andExpect(jsonPath("$.timetables[0].timetable.departures.length()").value(2));
+                .andExpect(header().exists("Content-Length"))
+                .andReturn();
+        assertThat(result.getResponse().getContentAsByteArray().length)
+                .isEqualTo(Long.parseLong(result.getResponse().getHeader("Content-Length")));
+        var body = result.getResponse().getContentAsString();
+        var root = objectMapper.readTree(body);
+        assertThat(root.path("cityId").asText()).isEqualTo("efefefef-efef-efef-efef-efefefefefef");
+        assertThat(root.path("anchorMonday").asText()).isEqualTo("2026-04-06");
+        assertThat(root.path("packVersion").asText()).isNotBlank();
+        assertThat(root.path("buses")).hasSize(1);
+        assertThat(root.path("routeStops")).hasSize(1);
+        assertThat(root.path("routeStops").get(0).path("directionId").asText()).isEqualTo("0");
+        assertThat(root.path("timetables")).hasSize(3);
+        assertThat(root.path("timetables").get(0).path("dayKind").asText()).isEqualTo("MONFRI");
+        assertThat(root.path("timetables").get(0).path("timetable").path("departures")).hasSize(2);
     }
 
     @Test

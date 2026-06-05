@@ -9,6 +9,7 @@ public record RouteSearchResponse(
         int offset,
         int limit,
         int total,
+        boolean hasMore,
         List<RouteOptionResponse> routes
 ) {
 }

@@ -1,5 +1,7 @@
 package com.rotransit.backend.controller;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rotransit.backend.dto.BusLineResponse;
 import com.rotransit.backend.dto.OfflinePackMetaResponse;
 import com.rotransit.backend.dto.OfflinePackResponse;
@@ -11,6 +13,8 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,9 +28,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class TransitCatalogController {
 
     private final RouteService routeService;
+    private final ObjectMapper objectMapper;
 
-    public TransitCatalogController(RouteService routeService) {
+    public TransitCatalogController(RouteService routeService, ObjectMapper objectMapper) {
         this.routeService = routeService;
+        this.objectMapper = objectMapper;
     }
 
     @GetMapping
@@ -43,11 +49,16 @@ public class TransitCatalogController {
     }
 
     @GetMapping("/offline-pack")
-    public OfflinePackResponse offlinePack(
+    public ResponseEntity<byte[]> offlinePack(
             @RequestParam UUID cityId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate anchorMonday
-    ) {
-        return routeService.buildOfflinePack(cityId, anchorMonday);
+    ) throws JsonProcessingException {
+        OfflinePackResponse pack = routeService.buildOfflinePack(cityId, anchorMonday);
+        byte[] body = objectMapper.writeValueAsBytes(pack);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
+                .contentLength(body.length)
+                .body(body);
     }
 
     @GetMapping("/{routeId}/stops")

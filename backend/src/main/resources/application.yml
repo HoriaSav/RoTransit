@@ -21,3 +21,18 @@ management:
     web:
       exposure:
         include: health,info
+
+rotransit:
+  otp:
+    enable-path-probing: ${ROTRANSIT_OTP_ENABLE_PATH_PROBING:false}
+  routes:
+    search:
+      additional-windows: ${ROTRANSIT_ROUTE_SEARCH_ADDITIONAL_WINDOWS:2}
+      max-additional-windows: ${ROTRANSIT_ROUTE_SEARCH_MAX_ADDITIONAL_WINDOWS:3}
+      slice-step-minutes: ${ROTRANSIT_ROUTE_SEARCH_SLICE_STEP_MINUTES:15}
+      max-slices: ${ROTRANSIT_ROUTE_SEARCH_MAX_SLICES:64}
+      parallel-workers: ${ROTRANSIT_ROUTE_SEARCH_PARALLEL_WORKERS:6}
+      window-minutes: ${ROTRANSIT_ROUTE_SEARCH_WINDOW_MINUTES:120}
+      session-ttl-seconds: ${ROTRANSIT_ROUTE_SEARCH_SESSION_TTL_SECONDS:120}
+      cache-max-entries: ${ROTRANSIT_ROUTE_SEARCH_CACHE_MAX_ENTRIES:128}
+      window-first-enabled: ${ROTRANSIT_ROUTE_SEARCH_WINDOW_FIRST_ENABLED:true}

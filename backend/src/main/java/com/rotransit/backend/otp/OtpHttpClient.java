@@ -8,6 +8,9 @@ import com.rotransit.backend.service.RouteSearchQuery;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.LongAdder;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
@@ -24,9 +27,20 @@ public class OtpHttpClient implements OtpClient {
 
     private final RestTemplate otpRestTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final boolean enablePathProbing;
+    private final LongAdder totalHttpCalls = new LongAdder();
 
-    public OtpHttpClient(RestTemplate otpRestTemplate) {
+    @Autowired
+    public OtpHttpClient(
+            RestTemplate otpRestTemplate,
+            @Value("${rotransit.otp.enable-path-probing:false}") boolean enablePathProbing) {
         this.otpRestTemplate = otpRestTemplate;
+        this.enablePathProbing = enablePathProbing;
+    }
+
+    // Backward-compatible constructor used by unit tests.
+    public OtpHttpClient(RestTemplate otpRestTemplate) {
+        this(otpRestTemplate, false);
     }
 
     @Override
@@ -61,9 +75,46 @@ public class OtpHttpClient implements OtpClient {
         return empty;
     }
 
+    @Override
+    public JsonNode searchRoutesWithWindow(String otpBaseUrl, RouteSearchQuery query, int searchWindowMinutes) {
+        Set<String> baseCandidates = baseCandidates(otpBaseUrl);
+        List<String> pathCandidates = preferPaths(
+                List.of("/plan", "/routers/default/plan", "/otp/plan", "/otp/routers/default/plan"));
+        JsonNode lastBody = null;
+        for (String base : baseCandidates) {
+            for (String path : pathCandidates) {
+                UriComponentsBuilder builder = UriComponentsBuilder.fromHttpUrl(base + path)
+                        .queryParam("fromPlace", query.origin())
+                        .queryParam("toPlace", query.destination())
+                        .queryParam("numItineraries", Math.max(query.itineraryCount(), 40))
+                        .queryParam("date", query.serviceDate())
+                        .queryParam("time", query.serviceTime())
+                        .queryParam("searchWindow", Math.max(1, searchWindowMinutes))
+                        .queryParam("locale", "en");
+                String url = builder.toUriString();
+                try {
+                    JsonNode body = getJson(url);
+                    lastBody = body;
+                    if (planHasItineraries(body)) {
+                        return body;
+                    }
+                } catch (OtpException ignored) {
+                    // try next endpoint candidate
+                }
+            }
+        }
+        if (lastBody != null) {
+            return lastBody;
+        }
+        ObjectNode empty = objectMapper.createObjectNode();
+        empty.set("plan", objectMapper.createObjectNode().set("itineraries", objectMapper.createArrayNode()));
+        return empty;
+    }
+
     private JsonNode searchRoutesRest(String otpBaseUrl, RouteSearchQuery query, boolean strictWalk) {
         Set<String> baseCandidates = baseCandidates(otpBaseUrl);
-        List<String> pathCandidates = List.of("/plan", "/routers/default/plan", "/otp/plan", "/otp/routers/default/plan");
+        List<String> pathCandidates = preferPaths(
+                List.of("/plan", "/routers/default/plan", "/otp/plan", "/otp/routers/default/plan"));
         JsonNode lastBody = null;
         for (String base : baseCandidates) {
             for (String path : pathCandidates) {
@@ -104,7 +155,7 @@ public class OtpHttpClient implements OtpClient {
 
     @Override
     public List<JsonNode> findNearbyStops(String otpBaseUrl, double latitude, double longitude, int radiusMeters) {
-        List<String> pathCandidates = List.of("/routers/default/index/stops", "/otp/routers/default/index/stops");
+        List<String> pathCandidates = preferPaths(List.of("/routers/default/index/stops", "/otp/routers/default/index/stops"));
         JsonNode body;
         try {
             body = getJsonWithCandidates(
@@ -139,7 +190,7 @@ public class OtpHttpClient implements OtpClient {
 
     @Override
     public List<JsonNode> searchStops(String otpBaseUrl, String query, int limit) {
-        List<String> basePathCandidates = List.of("/routers/default/index/stops", "/otp/routers/default/index/stops");
+        List<String> basePathCandidates = preferPaths(List.of("/routers/default/index/stops", "/otp/routers/default/index/stops"));
         List<List<QueryParam>> queryShapes = List.of(
                 List.of(new QueryParam("query", query), new QueryParam("detail", "true")),
                 List.of(new QueryParam("q", query), new QueryParam("detail", "true")),
@@ -168,7 +219,7 @@ public class OtpHttpClient implements OtpClient {
     public List<JsonNode> listBusRoutes(String otpBaseUrl) {
         return getArrayWithCandidates(
                 otpBaseUrl,
-                List.of("/routers/default/index/routes", "/otp/routers/default/index/routes"),
+                preferPaths(List.of("/routers/default/index/routes", "/otp/routers/default/index/routes")),
                 List.of()
         );
     }
@@ -181,10 +232,10 @@ public class OtpHttpClient implements OtpClient {
         }
         return getArrayWithCandidates(
                 otpBaseUrl,
-                List.of(
+                preferPaths(List.of(
                         "/routers/default/index/routes/" + routeId + "/stops",
                         "/otp/routers/default/index/routes/" + routeId + "/stops"
-                ),
+                )),
                 queryParams
         );
     }
@@ -193,10 +244,10 @@ public class OtpHttpClient implements OtpClient {
     public List<JsonNode> routeStopTimes(String otpBaseUrl, String routeId, String stopId, String serviceDate) {
         return getArrayWithCandidates(
                 otpBaseUrl,
-                List.of(
+                preferPaths(List.of(
                         "/routers/default/index/stops/" + stopId + "/stoptimes",
                         "/otp/routers/default/index/stops/" + stopId + "/stoptimes"
-                ),
+                )),
                 List.of(
                         new QueryParam("startDate", serviceDate),
                         new QueryParam("endDate", serviceDate),
@@ -256,12 +307,21 @@ public class OtpHttpClient implements OtpClient {
                 : otpBaseUrl;
         Set<String> baseCandidates = new LinkedHashSet<>();
         baseCandidates.add(normalizedBase);
-        if (normalizedBase.endsWith("/otp")) {
-            baseCandidates.add(normalizedBase.substring(0, normalizedBase.length() - 4));
-        } else {
-            baseCandidates.add(normalizedBase + "/otp");
+        if (enablePathProbing) {
+            if (normalizedBase.endsWith("/otp")) {
+                baseCandidates.add(normalizedBase.substring(0, normalizedBase.length() - 4));
+            } else {
+                baseCandidates.add(normalizedBase + "/otp");
+            }
         }
         return baseCandidates;
+    }
+
+    private List<String> preferPaths(List<String> candidates) {
+        if (enablePathProbing || candidates.isEmpty()) {
+            return candidates;
+        }
+        return List.of(candidates.get(0));
     }
 
     private record QueryParam(String key, Object value) {
@@ -419,12 +479,13 @@ public class OtpHttpClient implements OtpClient {
     private JsonNode postGraphQl(String otpBaseUrl, String query, JsonNode variables) {
         OtpException lastError = null;
         for (String base : baseCandidates(otpBaseUrl)) {
-            for (String path : List.of("/gtfs/v1", "/otp/gtfs/v1", "/transmodel/v3", "/otp/transmodel/v3")) {
+            for (String path : preferPaths(List.of("/gtfs/v1", "/otp/gtfs/v1", "/transmodel/v3", "/otp/transmodel/v3"))) {
                 String url = base + path;
                 ObjectNode body = objectMapper.createObjectNode();
                 body.put("query", query);
                 body.set("variables", variables);
                 try {
+                    totalHttpCalls.increment();
                     ResponseEntity<JsonNode> response = otpRestTemplate.postForEntity(url, body, JsonNode.class);
                     JsonNode payload = response.getBody();
                     if (payload != null && payload.path("errors").isArray() && payload.path("errors").size() > 0) {
@@ -465,10 +526,16 @@ public class OtpHttpClient implements OtpClient {
 
     private JsonNode getJson(String url) {
         try {
+            totalHttpCalls.increment();
             ResponseEntity<JsonNode> response = otpRestTemplate.getForEntity(url, JsonNode.class);
             return response.getBody();
         } catch (RestClientException ex) {
             throw new OtpException("OTP request failed for URL: " + url, ex);
         }
+    }
+
+    @Override
+    public long totalHttpCalls() {
+        return totalHttpCalls.sum();
     }
 }

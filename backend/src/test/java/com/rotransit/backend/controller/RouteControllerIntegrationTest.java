@@ -168,11 +168,12 @@ class RouteControllerIntegrationTest {
                         .queryParam("offset", "1")
                         .queryParam("limit", "1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.offset").value(0))
+                .andExpect(jsonPath("$.offset").value(1))
                 .andExpect(jsonPath("$.limit").value(1))
                 .andExpect(jsonPath("$.total").value(3))
-                .andExpect(jsonPath("$.routes.length()").value(3))
-                .andExpect(jsonPath("$.routes[0].durationSeconds").value(1000));
+                .andExpect(jsonPath("$.hasMore").exists())
+                .andExpect(jsonPath("$.routes.length()").value(1))
+                .andExpect(jsonPath("$.routes[0].durationSeconds").value(1100));
     }
 
     @Test
