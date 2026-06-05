@@ -7,6 +7,32 @@ final recentSearchesRepositoryProvider = Provider<RecentSearchesRepository>(
   (ref) => RecentSearchesRepository(),
 );
 
+const double _kRecentJourneyCoordEpsilon = 1e-5;
+
+bool _sameJourneyEndpoints(
+  StopSearchItem from,
+  StopSearchItem to,
+  Map<String, Object?> row,
+) {
+  bool near(double a, double b) => (a - b).abs() < _kRecentJourneyCoordEpsilon;
+  return near(
+        from.lat,
+        (row['from_lat']! as num).toDouble(),
+      ) &&
+      near(
+        from.lon,
+        (row['from_lon']! as num).toDouble(),
+      ) &&
+      near(
+        to.lat,
+        (row['to_lat']! as num).toDouble(),
+      ) &&
+      near(
+        to.lon,
+        (row['to_lon']! as num).toDouble(),
+      );
+}
+
 class RecentSearchEntry {
   const RecentSearchEntry({
     required this.id,
@@ -39,6 +65,20 @@ class RecentSearchesRepository {
     required String serviceTimeLabel,
   }) async {
     final db = await LocalDb.instance();
+    final sameCityRows = await db.query(
+      'recent_searches',
+      where: 'city_id = ?',
+      whereArgs: [cityId],
+    );
+    for (final row in sameCityRows) {
+      if (_sameJourneyEndpoints(fromStop, toStop, row)) {
+        await db.delete(
+          'recent_searches',
+          where: 'id = ?',
+          whereArgs: [row['id'] as int],
+        );
+      }
+    }
     await db.insert('recent_searches', {
       'city_id': cityId,
       'city_name': cityName,

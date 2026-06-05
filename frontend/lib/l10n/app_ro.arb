@@ -1,0 +1,58 @@
+{
+  "@@locale": "ro",
+
+  "appTitle": "RoTransit",
+
+  "navSearch": "Căutare",
+  "navBus": "Autobuz",
+  "navFavorites": "Favorite",
+  "navSettings": "Setări",
+
+  "settingsTitle": "Setări",
+  "city": "Oraș",
+  "notifications": "Notificări",
+  "darkMode": "Mod întunecat",
+  "teTransport": "Transport TE",
+  "language": "Limbă",
+  "languageEnglish": "Engleză",
+  "languageRomanian": "Română",
+  "languageGerman": "Germană",
+
+  "offlineTimetables": "Orare offline",
+  "offlineOnDevicePack": "Pachet pe dispozitiv: {version}",
+  "offlineServerMeta": "Meta server (actualizări): {meta}",
+  "offlineUpdatingBackground": "Se descarcă orarele…",
+  "offlineDownloadProgressPercent": "Se descarcă… {percent}%",
+  "offlineDownloadEtaMinutes": "~{count} min rămas",
+  "offlineDownloadEtaSeconds": "~{count} sec rămas",
+  "offlineDownloadSaving": "Se salvează orarele pe dispozitiv…",
+  "offlineDownloadReceived": "Descărcat {size}…",
+  "offlineDownloadReceivedWithElapsed": "Descărcat {size} · {seconds} sec",
+  "offlinePackNotAvailablePreview": "Indisponibil în modul previzualizare",
+  "offlinePackChooseCityFirst": "Alege mai întâi un oraș",
+  "offlinePackNoneYet": "Nedescărcat",
+  "offlineMetaEndpointMissing": "Indisponibil — implementează GET /api/buses/offline-pack-meta pe server",
+  "timetableDownloadSourceBus": "Orare autobuz",
+  "timetableDownloadConfirmTitle": "Descarci orarele?",
+  "timetableDownloadConfirmMessage": "Descarci orarele offline de autobuz pentru {cityName}? Poate consuma date mobile.",
+  "timetableDownloadAction": "Descarcă",
+  "timetableDownloadSuccess": "Orare descărcate pentru {cityName}",
+  "timetableDownloadFailed": "Orarele nu au putut fi descărcate",
+  "timetableDownloadOffline": "Conectează-te la internet pentru a descărca orarele",
+
+  "busTabTimetablesNotDownloadedTitle": "Orare nedescărcate",
+  "busTabTimetablesNotDownloadedBody": "Descarcă orarele de autobuz pentru acest oraș din Setări ca să poți vedea liniile și programul.",
+  "busTabOpenSettings": "Mergi la Setări",
+
+  "version": "Versiune",
+  "privacyPolicy": "Politica de confidențialitate",
+  "termsOfUse": "Termeni de utilizare",
+  "help": "Ajutor",
+  "contactUs": "Contactează-ne",
+
+  "countryLabel": "Țară: {country}",
+  "cityChangedTo": "Oraș schimbat în {name}",
+  "cityUnavailable": "Indisponibil",
+
+  "pressBackAgainToExit": "Apasă din nou rapid pe Înapoi pentru a ieși din aplicație"
+}

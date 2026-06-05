@@ -23,9 +23,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api")
 public class RouteController {
 
-    /** Minimum OTP itineraries per request so the client can paginate (reveal) without a second plan. */
-    private static final int MIN_OTP_ITINERARIES = 50;
-
     private final RouteService routeService;
 
     public RouteController(RouteService routeService) {
@@ -41,9 +38,10 @@ public class RouteController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.TIME) LocalTime serviceTime,
             @RequestParam(defaultValue = "1") @Min(1) @Max(10) int passengerCount,
             @RequestParam(defaultValue = "0") @Min(0) int offset,
-            @RequestParam(defaultValue = "10") @Min(1) @Max(50) int limit
+            @RequestParam(defaultValue = "10") @Min(1) @Max(50) int limit,
+            @RequestParam(defaultValue = "false") boolean includeGeometry
     ) {
-        int itineraryCount = Math.min(100, Math.max(MIN_OTP_ITINERARIES, offset + limit));
+        int itineraryCount = Math.min(40, Math.max(8, (offset + limit) * 2));
         return routeService.searchRoutes(cityId, new RouteSearchQuery(
                 origin,
                 destination,
@@ -51,7 +49,7 @@ public class RouteController {
                 serviceTime,
                 passengerCount,
                 itineraryCount
-        ), offset, limit);
+        ), offset, limit, includeGeometry);
     }
 
     @GetMapping("/stops/nearby")

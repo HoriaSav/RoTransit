@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 /// Height of the shell branding bar below the status bar.
-const double kShellHeaderBarHeight = 52;
+const double kShellHeaderBarHeight = 58;
 
 /// Height of the custom floating nav pill in [ShellFloatingNavBar] (~120% of prior 48dp).
 const double kShellFloatingNavHeight = 58;

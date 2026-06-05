@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:rotransit_frontend/l10n/app_localizations.dart';
 
 import '../../../core/state/transport_settings_provider.dart';
+import '../../../core/theme/app_extra_colors.dart';
 import '../../routes/domain/route_models.dart';
 import '../../shell/shell_layout.dart';
+import '../../shell/state/navigation_provider.dart';
 import '../state/saved_providers.dart';
 
 class BusTab extends StatelessWidget {
@@ -14,7 +17,7 @@ class BusTab extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: ColoredBox(
-        color: const Color(0xFFF2F2F2),
+        color: context.extraColors.tabBackground,
         child: SafeArea(
           top: false,
           bottom: false,
@@ -81,48 +84,117 @@ class _BusLinesView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context)!;
     final teEnabled = ref.watch(teTransportEnabledProvider);
+    final packInstalled = ref.watch(cityOfflinePackInstalledProvider);
     final buses = ref.watch(busesProvider);
-    return buses.when(
-      data: (items) {
-        if (items.isEmpty) {
-          return const Center(child: Text('No bus lines found.'));
+
+    return packInstalled.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (_, __) => Center(child: Text(l10n.busTabTimetablesNotDownloadedBody)),
+      data: (installed) {
+        if (!installed) {
+          return _TimetablesNotDownloadedBody(
+            title: l10n.busTabTimetablesNotDownloadedTitle,
+            body: l10n.busTabTimetablesNotDownloadedBody,
+            actionLabel: l10n.busTabOpenSettings,
+            onOpenSettings: () =>
+                ref.read(selectedTabProvider.notifier).state = 3,
+          );
         }
-        final urban = _sortedByNumber(_filterUrban(items));
-        final rural = _sortedByNumber(_filterRural(items));
-        final te = _sortedByNumber(_filterTe(items));
-        final tabs = <Tab>[
-          const Tab(text: 'Urban'),
-          const Tab(text: 'Rural'),
-          if (teEnabled) const Tab(text: 'TE'),
-        ];
-        final views = <Widget>[
-          _BusListBody(items: urban),
-          _BusListBody(items: rural),
-          if (teEnabled) _BusListBody(items: te),
-        ];
-        return DefaultTabController(
-          length: tabs.length,
-          child: Column(
-            children: [
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
-                child: TabBar(
-                  tabs: tabs,
-                ),
+        return buses.when(
+          data: (items) {
+            if (items.isEmpty) {
+              return const Center(child: Text('No bus lines found.'));
+            }
+            final urban = _sortedByNumber(_filterUrban(items));
+            final rural = _sortedByNumber(_filterRural(items));
+            final te = _sortedByNumber(_filterTe(items));
+            final tabs = <Tab>[
+              const Tab(text: 'Urban'),
+              const Tab(text: 'Rural'),
+              if (teEnabled) const Tab(text: 'TE'),
+            ];
+            final views = <Widget>[
+              _BusListBody(items: urban),
+              _BusListBody(items: rural),
+              if (teEnabled) _BusListBody(items: te),
+            ];
+            return DefaultTabController(
+              length: tabs.length,
+              child: Column(
+                children: [
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
+                    child: TabBar(
+                      tabs: tabs,
+                    ),
+                  ),
+                  Expanded(
+                    child: TabBarView(
+                      children: views,
+                    ),
+                  ),
+                ],
               ),
-              Expanded(
-                child: TabBarView(
-                  children: views,
-                ),
-              ),
-            ],
-          ),
+            );
+          },
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (_, __) => const Center(child: Text('Could not load bus lines')),
         );
       },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, __) => const Center(child: Text('Could not load bus lines')),
+    );
+  }
+}
+
+class _TimetablesNotDownloadedBody extends StatelessWidget {
+  const _TimetablesNotDownloadedBody({
+    required this.title,
+    required this.body,
+    required this.actionLabel,
+    required this.onOpenSettings,
+  });
+
+  final String title;
+  final String body;
+  final String actionLabel;
+  final VoidCallback onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.cloud_download_outlined,
+              size: 56,
+              color: scheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              body,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
+            ),
+            const SizedBox(height: 20),
+            FilledButton(
+              onPressed: onOpenSettings,
+              child: Text(actionLabel),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -376,12 +448,12 @@ class _WeekTimetableTable extends StatelessWidget {
       return const Center(child: Text('No departures for this stop.'));
     }
 
-    const brandBlue = Color(0xFF0A3E96);
-    const headerStyle = TextStyle(
+    final scheme = Theme.of(context).colorScheme;
+    final headerStyle = TextStyle(
       fontWeight: FontWeight.bold,
-      color: Colors.white,
+      color: scheme.onPrimary,
     );
-    const cellStyle = TextStyle(height: 1.2);
+    final cellStyle = TextStyle(height: 1.2, color: scheme.onSurface);
 
     Widget cellText(String value, {TextStyle? style}) {
       return Text(
@@ -406,12 +478,12 @@ class _WeekTimetableTable extends StatelessWidget {
                     defaultColumnWidth: const IntrinsicColumnWidth(),
                     defaultVerticalAlignment: TableCellVerticalAlignment.middle,
                     border: TableBorder.all(
-                      color: const Color(0xFF0A3E96),
+                      color: scheme.primary,
                       width: 1,
                     ),
                     children: [
-                      const TableRow(
-                        decoration: BoxDecoration(color: brandBlue),
+                      TableRow(
+                        decoration: BoxDecoration(color: scheme.primary),
                         children: [
                           Padding(
                             padding: EdgeInsets.symmetric(vertical: 6, horizontal: 6),

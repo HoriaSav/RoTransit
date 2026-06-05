@@ -10,6 +10,7 @@ class RouteSearchRequest {
     this.passengerCount = 1,
     this.offset = 0,
     this.limit = 10,
+    this.includeGeometry = false,
   });
 
   final String cityId;
@@ -20,6 +21,7 @@ class RouteSearchRequest {
   final int passengerCount;
   final int offset;
   final int limit;
+  final bool includeGeometry;
 }
 
 class CityItem {
@@ -263,6 +265,7 @@ class RouteSearchResponse {
     this.offset = 0,
     this.limit = 10,
     this.total = 0,
+    this.hasMore = false,
     required this.routes,
   });
 
@@ -271,6 +274,7 @@ class RouteSearchResponse {
   final int offset;
   final int limit;
   final int total;
+  final bool hasMore;
   final List<RouteOption> routes;
 }
 
@@ -417,6 +421,17 @@ class SavedRouteItem {
           DateTime.fromMillisecondsSinceEpoch(0),
     );
   }
+}
+
+/// Display title for a saved journey: first leg origin through last leg destination.
+String routeJourneyTitle(RouteOption route) {
+  if (route.legs.isEmpty) return 'Saved journey';
+  final from = route.legs.first.fromName.trim();
+  final to = route.legs.last.toName.trim();
+  if (from.isEmpty && to.isEmpty) return 'Saved journey';
+  if (from.isEmpty) return to;
+  if (to.isEmpty) return from;
+  return '$from – $to';
 }
 
 String encodeRouteMetadata(RouteOption option) => jsonEncode(option.toJson());

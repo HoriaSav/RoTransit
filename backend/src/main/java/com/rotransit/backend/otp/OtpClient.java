@@ -8,6 +8,8 @@ public interface OtpClient {
 
     JsonNode searchRoutes(String otpBaseUrl, RouteSearchQuery query);
 
+    JsonNode searchRoutesWithWindow(String otpBaseUrl, RouteSearchQuery query, int searchWindowMinutes);
+
     List<JsonNode> findNearbyStops(String otpBaseUrl, double latitude, double longitude, int radiusMeters);
 
     List<JsonNode> searchStops(String otpBaseUrl, String query, int limit);
@@ -17,4 +19,6 @@ public interface OtpClient {
     List<JsonNode> listRouteStops(String otpBaseUrl, String routeId, String directionId);
 
     List<JsonNode> routeStopTimes(String otpBaseUrl, String routeId, String stopId, String serviceDate);
+
+    long totalHttpCalls();
 }

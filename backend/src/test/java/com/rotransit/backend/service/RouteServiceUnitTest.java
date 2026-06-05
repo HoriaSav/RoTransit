@@ -170,20 +170,44 @@ class RouteServiceUnitTest {
                 }
                 """);
         when(otpClient.searchRoutes(anyString(), any())).thenReturn(plan);
+        JsonNode emptyPlan = objectMapper.readTree("{\"plan\":{\"itineraries\":[]}}");
+        when(otpClient.searchRoutesWithWindow(anyString(), any(), anyInt())).thenReturn(emptyPlan);
 
         var result = routeService.searchRoutes(cityId, sampleQuery(), 0, 10);
 
-        RouteSearchQuery q = sampleQuery();
-        int expectedCalls = RouteService.shiftOffsetsMinutesThroughEndOfServiceDay(
-                q.serviceDate(), q.serviceTime()).size();
         ArgumentCaptor<RouteSearchQuery> queryCap = ArgumentCaptor.forClass(RouteSearchQuery.class);
-        verify(otpClient, times(expectedCalls)).searchRoutes(anyString(), queryCap.capture());
+        verify(otpClient, org.mockito.Mockito.atLeast(2)).searchRoutes(anyString(), queryCap.capture());
         List<RouteSearchQuery> queries = queryCap.getAllValues();
         assertEquals(LocalTime.of(8, 30), queries.get(0).serviceTime());
         assertEquals(LocalTime.of(8, 45), queries.get(1).serviceTime());
-        assertTrue(queries.get(queries.size() - 1).serviceTime().getHour() >= 23);
 
         assertEquals(1, result.routes().size());
+    }
+
+    @Test
+    void searchRoutesContinuesSliceScanAfterWindowFirstReturnsOneItinerary() throws Exception {
+        UUID cityId = UUID.fromString("12121212-1212-1212-1212-121212121212");
+        City city = mockCity(cityId, "Brasov", "http://otp:8080/otp");
+        when(cityRepository.findById(cityId)).thenReturn(Optional.of(city));
+        JsonNode windowPlan = objectMapper.readTree("""
+                {"plan":{"itineraries":[{"duration":1000,"walkDistance":50,"legs":[
+                  {"mode":"BUS","route":{"gtfsId":"W1"},"from":{},"to":{},"startTime":1000,"endTime":2000,"distance":100}
+                ]}]}}
+                """);
+        JsonNode slicePlan = objectMapper.readTree("""
+                {"plan":{"itineraries":[{"duration":1100,"walkDistance":50,"legs":[
+                  {"mode":"BUS","route":{"gtfsId":"S1"},"from":{},"to":{},"startTime":2000,"endTime":3000,"distance":100}
+                ]}]}}
+                """);
+        when(otpClient.searchRoutesWithWindow(anyString(), any(), anyInt())).thenReturn(windowPlan);
+        when(otpClient.searchRoutes(anyString(), any())).thenReturn(slicePlan);
+
+        var result = routeService.searchRoutes(cityId, sampleQuery(), 0, 5);
+
+        verify(otpClient, times(1)).searchRoutesWithWindow(anyString(), any(), anyInt());
+        verify(otpClient, org.mockito.Mockito.atLeast(1)).searchRoutes(anyString(), any());
+        assertTrue(result.total() >= 2, "slice scan should add itineraries beyond window-first");
+        assertTrue(result.routes().size() <= 5);
     }
 
     @Test

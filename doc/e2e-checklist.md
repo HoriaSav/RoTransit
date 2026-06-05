@@ -39,7 +39,6 @@ Expected:
 ## Release gates
 
 - Pre-push local gate: see `doc/pre-push-gate.md`
-- Render post-deploy gate: see `doc/render-postdeploy-checklist.md`
 
 ## Frontend note
 

@@ -13,3 +13,9 @@ spring:
         format_sql: true
   flyway:
     enabled: false
+
+rotransit:
+  routes:
+    search:
+      max-slices: 12
+      window-first-enabled: false

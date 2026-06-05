@@ -187,7 +187,7 @@ class SavedRouteServiceUnitTest {
                         )
                 )
         );
-        RouteSearchResponse searchResponse = new RouteSearchResponse(cityId, "Brasov", 0, 30, 1, List.of(option));
+        RouteSearchResponse searchResponse = new RouteSearchResponse(cityId, "Brasov", 0, 30, 1, false, List.of(option));
 
         when(userRepository.findByProviderAndProviderUserId("guest", deviceUserId)).thenReturn(Optional.of(user));
         when(savedRouteRepository.findById(routeId)).thenReturn(Optional.of(route));

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import '../../../core/format/search_text_normalizer.dart';
 import '../domain/route_models.dart';
 
 int _minOf(List<int> idxs) => idxs.reduce((a, b) => a < b ? a : b);
@@ -8,7 +9,17 @@ const double _mergeRadiusMeters = 120;
 const double _earthRadiusM = 6371000;
 
 String _normalizeStopName(String name) {
-  return name.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+  return normalizeSearchText(name);
+}
+
+/// Haversine distance in meters (shared for offline pack ranking).
+double stopSuggestionDistanceMeters(
+  double lat1,
+  double lon1,
+  double lat2,
+  double lon2,
+) {
+  return _distanceMeters(lat1, lon1, lat2, lon2);
 }
 
 double _distanceMeters(double lat1, double lon1, double lat2, double lon2) {

@@ -17,21 +17,26 @@ import com.rotransit.backend.dto.StopTimetableEntryResponse;
 import com.rotransit.backend.dto.StopTimetableResponse;
 import com.rotransit.backend.model.City;
 import com.rotransit.backend.otp.OtpClient;
+import com.rotransit.backend.otp.OtpException;
 import com.rotransit.backend.repository.CityRepository;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.HexFormat;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.time.Duration;
 import java.time.Instant;
@@ -40,7 +45,9 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -50,20 +57,72 @@ public class RouteService {
     /** Max walking (meters): drop walk-only itineraries above this; drop transit itineraries with any WALK leg above this. */
     private static final double MAX_WALK_LEG_METERS_WHEN_TRANSIT = 1000.0;
 
-    /** Step between OTP plan requests while scanning the rest of the service calendar day. */
+    /** Step between OTP plan requests when asking for additional windows. */
     private static final int ROUTE_SEARCH_SHIFT_STEP_MINUTES = 15;
 
-    /**
-     * Hard cap on OTP plan calls per user search (full-day scan can be long; protects OTP and timeouts).
-     */
-    private static final int MAX_OTP_PLAN_CALLS_PER_SEARCH = 256;
-
     /** Max distinct itineraries returned (payload / UI bounds). */
-    private static final int ROUTE_SEARCH_MERGED_CAP = 400;
+    private static final int ROUTE_SEARCH_MERGED_CAP = 120;
 
     private static final int MAX_AMBIGUOUS_DESTINATION_CANDIDATES = 12;
     /** One itinerary is enough: OTP returns the best option first. */
     private static final int RESOLVE_PLAN_ITINERARY_COUNT = 1;
+    private static final Duration DESTINATION_RESOLVE_CACHE_TTL = Duration.ofMinutes(30);
+
+    /**
+     * Mutable in-memory search session: window seed + incremental OTP time slices until
+     * {@link #scanComplete} or {@link #ROUTE_SEARCH_MERGED_CAP} itineraries are collected.
+     */
+    private static final class IncrementalRouteSearchSession {
+        private final String otpBaseUrl;
+        private final RouteSearchQuery query;
+        private final long minDepartureMillis;
+        private final List<Integer> sliceOffsets;
+        private final Set<String> seenKeys = new HashSet<>();
+        private final List<RouteOptionResponse> rawMerged = new ArrayList<>();
+        private List<RouteOptionResponse> routes = List.of();
+        private int nextSliceIndex;
+        private boolean scanComplete;
+        private boolean windowFirstAttempted;
+        private final Instant expiresAt;
+        private final Instant builtAt;
+
+        private IncrementalRouteSearchSession(
+                String otpBaseUrl,
+                RouteSearchQuery query,
+                long minDepartureMillis,
+                List<Integer> sliceOffsets,
+                Instant expiresAt,
+                Instant builtAt) {
+            this.otpBaseUrl = otpBaseUrl;
+            this.query = query;
+            this.minDepartureMillis = minDepartureMillis;
+            this.sliceOffsets = sliceOffsets;
+            this.expiresAt = expiresAt;
+            this.builtAt = builtAt;
+        }
+
+        private List<RouteOptionResponse> routes() {
+            return routes;
+        }
+
+        private boolean scanComplete() {
+            return scanComplete;
+        }
+
+        private boolean isExpired(Instant now) {
+            return expiresAt.isBefore(now);
+        }
+
+        private Instant builtAt() {
+            return builtAt;
+        }
+
+        private Instant expiresAt() {
+            return expiresAt;
+        }
+    }
+
+    private record CachedDestinationResolve(NearbyStopResponse stop, Instant expiresAt) {}
 
     private record DestinationResolveScore(
             NearbyStopResponse stop, int transfers, long durationSec, long walkRounded) {}
@@ -72,39 +131,238 @@ public class RouteService {
     private final OtpClient otpClient;
     private final GtfsReadService gtfsReadService;
     private final Executor stopResolveExecutor;
+    private final int additionalSearchWindows;
+    private final int maxAdditionalSearchWindows;
+    private final Map<String, CachedDestinationResolve> destinationResolveCache = new ConcurrentHashMap<>();
+    private final Map<String, IncrementalRouteSearchSession> routeSearchSessionCache = new ConcurrentHashMap<>();
+    private final int routeSearchSliceStepMinutes;
+    private final int routeSearchMaxSlices;
+    private final int routeSearchParallelWorkers;
+    private final int routeSearchWindowMinutes;
+    private final int routeSearchSessionTtlSeconds;
+    private final int routeSearchCacheMaxEntries;
+    private final boolean routeSearchWindowFirstEnabled;
 
+    @Autowired
     public RouteService(
             CityRepository cityRepository,
             OtpClient otpClient,
             GtfsReadService gtfsReadService,
+            @Value("${rotransit.routes.search.additional-windows:0}") int additionalSearchWindows,
+            @Value("${rotransit.routes.search.max-additional-windows:3}") int maxAdditionalSearchWindows,
+            @Value("${rotransit.routes.search.slice-step-minutes:15}") int routeSearchSliceStepMinutes,
+            @Value("${rotransit.routes.search.max-slices:64}") int routeSearchMaxSlices,
+            @Value("${rotransit.routes.search.parallel-workers:6}") int routeSearchParallelWorkers,
+            @Value("${rotransit.routes.search.window-minutes:120}") int routeSearchWindowMinutes,
+            @Value("${rotransit.routes.search.session-ttl-seconds:120}") int routeSearchSessionTtlSeconds,
+            @Value("${rotransit.routes.search.cache-max-entries:128}") int routeSearchCacheMaxEntries,
+            @Value("${rotransit.routes.search.window-first-enabled:true}") boolean routeSearchWindowFirstEnabled,
             @Qualifier("stopResolveExecutor") Executor stopResolveExecutor) {
         this.cityRepository = cityRepository;
         this.otpClient = otpClient;
         this.gtfsReadService = gtfsReadService;
+        this.additionalSearchWindows = Math.max(0, additionalSearchWindows);
+        this.maxAdditionalSearchWindows = Math.max(0, maxAdditionalSearchWindows);
+        this.routeSearchSliceStepMinutes = Math.max(1, routeSearchSliceStepMinutes);
+        this.routeSearchMaxSlices = Math.max(1, routeSearchMaxSlices);
+        this.routeSearchParallelWorkers = Math.max(1, routeSearchParallelWorkers);
+        this.routeSearchWindowMinutes = Math.max(1, routeSearchWindowMinutes);
+        this.routeSearchSessionTtlSeconds = Math.max(5, routeSearchSessionTtlSeconds);
+        this.routeSearchCacheMaxEntries = Math.max(16, routeSearchCacheMaxEntries);
+        this.routeSearchWindowFirstEnabled = routeSearchWindowFirstEnabled;
         this.stopResolveExecutor = stopResolveExecutor;
     }
 
-    public RouteSearchResponse searchRoutes(UUID cityId, RouteSearchQuery query, int offset, int limit) {
+    // Backward-compatible constructor used by unit tests.
+    public RouteService(
+            CityRepository cityRepository,
+            OtpClient otpClient,
+            GtfsReadService gtfsReadService,
+            Executor stopResolveExecutor) {
+        this(cityRepository, otpClient, gtfsReadService, 0, 3,
+                ROUTE_SEARCH_SHIFT_STEP_MINUTES, 64, 6, 120, 120, 128, true, stopResolveExecutor);
+    }
+
+    public RouteSearchResponse searchRoutes(
+            UUID cityId,
+            RouteSearchQuery query,
+            int offset,
+            int limit,
+            boolean includeGeometry) {
         City city = cityRepository.findById(cityId)
                 .orElseThrow(() -> new CityNotFoundException(cityId));
         log.info("searchRoutes cityId={} origin={} destination={} offset={} limit={}",
                 cityId, query.origin(), query.destination(), offset, limit);
+        Instant startedAt = Instant.now();
+        long otpCallsBefore = otpClient.totalHttpCalls();
 
         int safeLimit = Math.max(limit, 1);
-        List<RouteOptionResponse> routes =
-                mergeRoutesFromShiftedDepartureSearches(city.getOtpBaseUrl(), query);
-        routes.sort(Comparator
-                .comparingLong(RouteService::departureSortKey)
-                .thenComparingInt(RouteOptionResponse::transfers)
-                .thenComparingLong(RouteOptionResponse::durationSeconds));
+        int safeOffset = Math.max(offset, 0);
+        cleanupExpiredRouteSearchSessionsIfNeeded();
+        String sessionKey = routeSearchSessionKey(cityId, query);
+        Instant now = Instant.now();
+        IncrementalRouteSearchSession session = routeSearchSessionCache.get(sessionKey);
+        boolean cacheHit = session != null && !session.isExpired(now);
+        if (!cacheHit) {
+            session = newIncrementalSession(city.getOtpBaseUrl(), query, now);
+            routeSearchSessionCache.put(sessionKey, session);
+        }
+        int targetSize = safeOffset + safeLimit;
+        fillSessionUntil(session, targetSize);
+        List<RouteOptionResponse> routes = session.routes();
+        int total = routes.size();
+        boolean hasMore = !session.scanComplete();
+        int fromIndex = Math.min(safeOffset, total);
+        int toIndex = Math.min(fromIndex + safeLimit, total);
+        List<RouteOptionResponse> page = routes.subList(fromIndex, toIndex);
+        List<RouteOptionResponse> responseRoutes = includeGeometry
+                ? page
+                : page.stream().map(this::stripGeometry).toList();
+        long otpCallsAfter = otpClient.totalHttpCalls();
+        long elapsedMs = Duration.between(startedAt, now).toMillis();
+        log.info(
+                "searchRoutes metrics cityId={} elapsedMs={} otpHttpCalls={} total={} pageSize={} offset={} hasMore={} includeGeometry={} cacheHit={}",
+                cityId,
+                elapsedMs,
+                Math.max(0, otpCallsAfter - otpCallsBefore),
+                total,
+                responseRoutes.size(),
+                safeOffset,
+                hasMore,
+                includeGeometry,
+                cacheHit);
         return new RouteSearchResponse(
                 city.getId(),
                 city.getName(),
-                0,
+                safeOffset,
                 safeLimit,
-                routes.size(),
-                routes
+                total,
+                hasMore,
+                responseRoutes
         );
+    }
+
+    private IncrementalRouteSearchSession newIncrementalSession(
+            String otpBaseUrl, RouteSearchQuery query, Instant now) {
+        long minDepartureMillis = LocalDateTime.of(query.serviceDate(), query.serviceTime())
+                .atZone(java.time.ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli();
+        return new IncrementalRouteSearchSession(
+                otpBaseUrl,
+                query,
+                minDepartureMillis,
+                allDaySliceOffsets(query.serviceDate(), query.serviceTime()),
+                now.plusSeconds(routeSearchSessionTtlSeconds),
+                now);
+    }
+
+    private void fillSessionUntil(IncrementalRouteSearchSession session, int targetSize) {
+        if (!session.windowFirstAttempted && routeSearchWindowFirstEnabled) {
+            session.windowFirstAttempted = true;
+            try {
+                JsonNode windowResponse = otpClient.searchRoutesWithWindow(
+                        session.otpBaseUrl,
+                        session.query,
+                        routeSearchWindowMinutes);
+                if (windowResponse != null) {
+                    appendRoutesDedup(session, routesFromOtpPlan(windowResponse));
+                    refreshSessionRoutes(session);
+                }
+            } catch (Exception ex) {
+                log.debug("searchRoutes window-first failed: {}", ex.toString());
+            }
+            if (session.routes().size() >= targetSize || session.scanComplete) {
+                return;
+            }
+        }
+        while (session.routes().size() < targetSize && !session.scanComplete) {
+            int progressed = appendNextSliceChunk(session);
+            refreshSessionRoutes(session);
+            if (progressed == 0) {
+                session.scanComplete = true;
+                break;
+            }
+        }
+    }
+
+    private int appendNextSliceChunk(IncrementalRouteSearchSession session) {
+        if (session.nextSliceIndex >= session.sliceOffsets.size()) {
+            session.scanComplete = true;
+            return 0;
+        }
+        int from = session.nextSliceIndex;
+        int to = Math.min(from + routeSearchParallelWorkers, session.sliceOffsets.size());
+        List<Integer> chunk = session.sliceOffsets.subList(from, to);
+        List<CompletableFuture<List<RouteOptionResponse>>> futures = chunk.stream()
+                .map(plusMinutes -> CompletableFuture.supplyAsync(() -> {
+                    RouteSearchQuery shifted = plusMinutes == 0
+                            ? session.query
+                            : shiftServiceTime(session.query, plusMinutes);
+                    JsonNode response = otpClient.searchRoutes(session.otpBaseUrl, shifted);
+                    return routesFromOtpPlan(response);
+                }, stopResolveExecutor))
+                .toList();
+        try {
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        } catch (CompletionException ex) {
+            if (ex.getCause() instanceof OtpException otp) {
+                throw otp;
+            }
+            throw ex;
+        }
+        for (CompletableFuture<List<RouteOptionResponse>> future : futures) {
+            appendRoutesDedup(session, future.join());
+            if (session.scanComplete) {
+                break;
+            }
+        }
+        session.nextSliceIndex = to;
+        if (to >= session.sliceOffsets.size()) {
+            session.scanComplete = true;
+        }
+        return chunk.size();
+    }
+
+    private void appendRoutesDedup(IncrementalRouteSearchSession session, List<RouteOptionResponse> batch) {
+        for (RouteOptionResponse route : batch) {
+            String key = itineraryDedupKey(route);
+            if (session.seenKeys.add(key)) {
+                session.rawMerged.add(route);
+                if (session.rawMerged.size() >= ROUTE_SEARCH_MERGED_CAP) {
+                    session.scanComplete = true;
+                    return;
+                }
+            }
+        }
+    }
+
+    private void refreshSessionRoutes(IncrementalRouteSearchSession session) {
+        session.routes = normalizeMergedRoutes(session.rawMerged, session.minDepartureMillis);
+    }
+
+    private List<RouteOptionResponse> normalizeMergedRoutes(
+            List<RouteOptionResponse> merged, long minDepartureMillis) {
+        List<RouteOptionResponse> capped = applyWalkLegCapWhenTransit(merged);
+        List<RouteOptionResponse> filtered = capped.stream()
+                .filter(route -> {
+                    long departure = departureSortKey(route);
+                    if (departure < 86_400_000L) {
+                        return true;
+                    }
+                    return departure >= minDepartureMillis;
+                })
+                .collect(Collectors.toCollection(ArrayList::new));
+        filtered.sort(Comparator
+                .comparingLong(RouteService::departureSortKey)
+                .thenComparingInt(RouteOptionResponse::transfers)
+                .thenComparingLong(RouteOptionResponse::durationSeconds));
+        return filtered;
+    }
+
+    // Backward-compatible signature used by unit tests and existing call sites.
+    public RouteSearchResponse searchRoutes(UUID cityId, RouteSearchQuery query, int offset, int limit) {
+        return searchRoutes(cityId, query, offset, limit, false);
     }
 
     /**
@@ -117,45 +375,58 @@ public class RouteService {
         return r.legs().get(0).startTime();
     }
 
-    /**
-     * OTP plan times: requested departure, then +{@link #ROUTE_SEARCH_SHIFT_STEP_MINUTES} until end of
-     * {@code serviceDate} (23:59:59), deduplicating itineraries across calls.
-     */
-    private List<RouteOptionResponse> mergeRoutesFromShiftedDepartureSearches(
-            String otpBaseUrl, RouteSearchQuery query) {
-        List<Integer> plusMinutesList = shiftOffsetsMinutesThroughEndOfServiceDay(
-                query.serviceDate(), query.serviceTime());
-        List<RouteOptionResponse> merged = new ArrayList<>();
-        Set<String> seenKeys = new HashSet<>();
-        for (int plusMinutes : plusMinutesList) {
-            if (merged.size() >= ROUTE_SEARCH_MERGED_CAP) {
-                break;
+    private List<Integer> allDaySliceOffsets(LocalDate serviceDate, LocalTime serviceTime) {
+        LocalDateTime windowStart = LocalDateTime.of(serviceDate, serviceTime);
+        LocalDateTime dayEnd = serviceDate.atTime(23, 59, 59);
+        List<Integer> out = new ArrayList<>();
+        if (windowStart.isAfter(dayEnd)) {
+            out.add(0);
+            return out;
+        }
+        LocalDateTime t = windowStart;
+        while (!t.isAfter(dayEnd) && out.size() < routeSearchMaxSlices) {
+            out.add((int) Duration.between(windowStart, t).toMinutes());
+            t = t.plusMinutes(routeSearchSliceStepMinutes);
+        }
+        return out;
+    }
+
+    private String routeSearchSessionKey(UUID cityId, RouteSearchQuery query) {
+        int minuteBucket = query.serviceTime().getHour() * 60 + query.serviceTime().getMinute();
+        return cityId + "|" + query.origin() + "|" + query.destination()
+                + "|" + query.serviceDate() + "|" + minuteBucket;
+    }
+
+    private void cleanupExpiredRouteSearchSessionsIfNeeded() {
+        if (routeSearchSessionCache.size() < routeSearchCacheMaxEntries) {
+            return;
+        }
+        Instant now = Instant.now();
+        AtomicInteger removed = new AtomicInteger(0);
+        routeSearchSessionCache.entrySet().removeIf(entry -> {
+            boolean expired = entry.getValue().isExpired(now);
+            if (expired) {
+                removed.incrementAndGet();
             }
-            RouteSearchQuery shifted = plusMinutes == 0 ? query : shiftServiceTime(query, plusMinutes);
-            JsonNode response = otpClient.searchRoutes(otpBaseUrl, shifted);
-            List<RouteOptionResponse> batch = routesFromOtpPlan(response);
-            for (RouteOptionResponse route : batch) {
-                String key = itineraryDedupKey(route);
-                if (seenKeys.add(key)) {
-                    merged.add(route);
-                    if (merged.size() >= ROUTE_SEARCH_MERGED_CAP) {
-                        break;
-                    }
-                }
-            }
-            if (merged.size() >= ROUTE_SEARCH_MERGED_CAP) {
-                break;
+            return expired;
+        });
+        if (routeSearchSessionCache.size() > routeSearchCacheMaxEntries) {
+            List<Map.Entry<String, IncrementalRouteSearchSession>> oldestFirst = routeSearchSessionCache.entrySet().stream()
+                    .sorted(Comparator.comparing(e -> e.getValue().builtAt()))
+                    .toList();
+            int toDrop = routeSearchSessionCache.size() - routeSearchCacheMaxEntries;
+            for (int i = 0; i < toDrop && i < oldestFirst.size(); i++) {
+                routeSearchSessionCache.remove(oldestFirst.get(i).getKey());
+                removed.incrementAndGet();
             }
         }
-        // One pass on the full pool: drop transit trips with any WALK leg > 1 km (see below). Per-batch
-        // fallback used to re-inject long walks from other time slices; global fallback keeps UX if OTP
-        // only returns such itineraries.
-        return applyWalkLegCapWhenTransit(merged);
+        if (removed.get() > 0) {
+            log.debug("routeSearchSessionCache cleanup removed={} size={}", removed.get(), routeSearchSessionCache.size());
+        }
     }
 
     /**
-     * Minute offsets from the user’s {@code serviceTime} through the end of {@code serviceDate} (inclusive),
-     * stepping by {@link #ROUTE_SEARCH_SHIFT_STEP_MINUTES}, capped by {@link #MAX_OTP_PLAN_CALLS_PER_SEARCH}.
+     * Backward-compatible helper retained for tests. In production fast mode we do not use this full-day scan.
      */
     static List<Integer> shiftOffsetsMinutesThroughEndOfServiceDay(LocalDate serviceDate, LocalTime serviceTime) {
         LocalDateTime windowStart = LocalDateTime.of(serviceDate, serviceTime);
@@ -166,7 +437,7 @@ public class RouteService {
             return out;
         }
         LocalDateTime t = windowStart;
-        while (!t.isAfter(dayEnd) && out.size() < MAX_OTP_PLAN_CALLS_PER_SEARCH) {
+        while (!t.isAfter(dayEnd) && out.size() < 256) {
             out.add((int) Duration.between(windowStart, t).toMinutes());
             t = t.plusMinutes(ROUTE_SEARCH_SHIFT_STEP_MINUTES);
         }
@@ -182,6 +453,32 @@ public class RouteService {
                 dt.toLocalTime(),
                 base.passengerCount(),
                 base.itineraryCount());
+    }
+
+    private RouteOptionResponse stripGeometry(RouteOptionResponse option) {
+        List<LegResponse> legsWithoutGeometry = option.legs().stream()
+                .map(leg -> new LegResponse(
+                        leg.mode(),
+                        leg.routeId(),
+                        leg.fromName(),
+                        leg.fromLat(),
+                        leg.fromLon(),
+                        leg.toName(),
+                        leg.toLat(),
+                        leg.toLon(),
+                        leg.startTime(),
+                        leg.endTime(),
+                        leg.distance(),
+                        List.of(),
+                        leg.stops()))
+                .toList();
+        return new RouteOptionResponse(
+                option.durationSeconds(),
+                option.transfers(),
+                option.walkDistanceMeters(),
+                option.estimatedPriceLei(),
+                option.fareRule(),
+                legsWithoutGeometry);
     }
 
     /**
@@ -529,12 +826,19 @@ public class RouteService {
         if (norm.isEmpty()) {
             throw new StopNotFoundException("Empty stop name");
         }
+        String cacheKey = destinationResolveCacheKey(cityId, norm, origin, serviceDate, serviceTime);
+        NearbyStopResponse cached = readDestinationResolveCache(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
         List<NearbyStopResponse> candidates = gtfsReadService.findStopsByNormalizedName(cityId, norm);
         if (candidates.isEmpty()) {
             throw new StopNotFoundException("No stop matches name: " + stopDisplayName);
         }
         if (candidates.size() == 1) {
-            return candidates.get(0);
+            NearbyStopResponse winner = candidates.get(0);
+            writeDestinationResolveCache(cacheKey, winner);
+            return winner;
         }
         double[] o = parseLatLonCommaSeparated(origin);
         List<NearbyStopResponse> ranked = new ArrayList<>(candidates);
@@ -565,9 +869,13 @@ public class RouteService {
                     stopDisplayName,
                     toTry.size());
             if (o != null) {
-                return pickClosestStop(candidates, o[0], o[1]);
+                NearbyStopResponse winner = pickClosestStop(candidates, o[0], o[1]);
+                writeDestinationResolveCache(cacheKey, winner);
+                return winner;
             }
-            return candidates.get(0);
+            NearbyStopResponse winner = candidates.get(0);
+            writeDestinationResolveCache(cacheKey, winner);
+            return winner;
         }
         scored.sort(Comparator.comparingInt(DestinationResolveScore::transfers)
                 .thenComparingLong(DestinationResolveScore::durationSec)
@@ -578,7 +886,43 @@ public class RouteService {
                 best.stopId(),
                 stopDisplayName,
                 candidates.size());
+        writeDestinationResolveCache(cacheKey, best);
         return best;
+    }
+
+    private String destinationResolveCacheKey(
+            UUID cityId,
+            String normalizedStopName,
+            String origin,
+            LocalDate serviceDate,
+            LocalTime serviceTime) {
+        String originCell = "na";
+        double[] o = parseLatLonCommaSeparated(origin);
+        if (o != null) {
+            originCell = String.format(Locale.ROOT, "%.3f,%.3f",
+                    Math.round(o[0] * 1000.0) / 1000.0,
+                    Math.round(o[1] * 1000.0) / 1000.0);
+        }
+        int bucket = (serviceTime.getHour() * 60 + serviceTime.getMinute()) / 30;
+        return cityId + "|" + normalizedStopName + "|" + originCell + "|" + serviceDate.getDayOfWeek() + "|" + bucket;
+    }
+
+    private NearbyStopResponse readDestinationResolveCache(String key) {
+        CachedDestinationResolve cached = destinationResolveCache.get(key);
+        if (cached == null) {
+            return null;
+        }
+        if (cached.expiresAt().isBefore(Instant.now())) {
+            destinationResolveCache.remove(key);
+            return null;
+        }
+        return cached.stop();
+    }
+
+    private void writeDestinationResolveCache(String key, NearbyStopResponse stop) {
+        destinationResolveCache.put(
+                key,
+                new CachedDestinationResolve(stop, Instant.now().plus(DESTINATION_RESOLVE_CACHE_TTL)));
     }
 
     private Optional<DestinationResolveScore> scoreDestinationCandidate(
