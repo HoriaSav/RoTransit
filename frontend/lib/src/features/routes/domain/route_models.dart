@@ -423,15 +423,184 @@ class SavedRouteItem {
   }
 }
 
-/// Display title for a saved journey: first leg origin through last leg destination.
-String routeJourneyTitle(RouteOption route) {
-  if (route.legs.isEmpty) return 'Saved journey';
-  final from = route.legs.first.fromName.trim();
-  final to = route.legs.last.toName.trim();
-  if (from.isEmpty && to.isEmpty) return 'Saved journey';
-  if (from.isEmpty) return to;
-  if (to.isEmpty) return from;
+bool isGenericJourneyPlaceName(String name) {
+  final normalized = name.trim().toLowerCase();
+  return normalized.isEmpty ||
+      normalized == 'origin' ||
+      normalized == 'destination';
+}
+
+bool isTransitLegMode(String mode) {
+  final normalized = mode.trim().toUpperCase();
+  return normalized != 'WALK' &&
+      normalized != 'BICYCLE' &&
+      normalized != 'CAR';
+}
+
+RouteLeg? firstTransitLegOf(RouteOption route) {
+  for (final leg in route.legs) {
+    if (isTransitLegMode(leg.mode)) return leg;
+  }
+  return null;
+}
+
+RouteLeg? lastTransitLegOf(RouteOption route) {
+  for (final leg in route.legs.reversed) {
+    if (isTransitLegMode(leg.mode)) return leg;
+  }
+  return null;
+}
+
+String? _resolvedJourneyEndpointName({
+  required RouteOption route,
+  required bool isOrigin,
+  String? label,
+}) {
+  final trimmedLabel = label?.trim();
+  if (trimmedLabel != null &&
+      trimmedLabel.isNotEmpty &&
+      !isGenericJourneyPlaceName(trimmedLabel)) {
+    return trimmedLabel;
+  }
+
+  final firstTransit = firstTransitLegOf(route);
+  final lastTransit = lastTransitLegOf(route);
+  if (route.legs.isEmpty) return null;
+
+  final candidate = isOrigin
+      ? (firstTransit?.fromName ?? route.legs.first.fromName).trim()
+      : (lastTransit?.toName ?? route.legs.last.toName).trim();
+  if (candidate.isEmpty || isGenericJourneyPlaceName(candidate)) return null;
+  return candidate;
+}
+
+/// Display title for a saved journey, preferring explicit labels then transit stops.
+String routeJourneyTitle(
+  RouteOption route, {
+  String? originLabel,
+  String? destinationLabel,
+}) {
+  final from = _resolvedJourneyEndpointName(
+    route: route,
+    isOrigin: true,
+    label: originLabel,
+  );
+  final to = _resolvedJourneyEndpointName(
+    route: route,
+    isOrigin: false,
+    label: destinationLabel,
+  );
+  if (from == null && to == null) return 'Saved journey';
+  if (from == null) return to!;
+  if (to == null) return from;
   return '$from – $to';
+}
+
+RouteLeg _legWithEndpointNames(
+  RouteLeg leg, {
+  String? fromName,
+  String? toName,
+}) {
+  return RouteLeg(
+    mode: leg.mode,
+    routeId: leg.routeId,
+    fromName: fromName ?? leg.fromName,
+    fromLat: leg.fromLat,
+    fromLon: leg.fromLon,
+    toName: toName ?? leg.toName,
+    toLat: leg.toLat,
+    toLon: leg.toLon,
+    startTime: leg.startTime,
+    endTime: leg.endTime,
+    distance: leg.distance,
+    geometry: leg.geometry,
+    stops: leg.stops,
+  );
+}
+
+/// Patches generic OTP walk endpoints before persisting a favorite.
+RouteOption routeOptionWithJourneyLabels(
+  RouteOption option, {
+  String? originLabel,
+  String? destinationLabel,
+}) {
+  final fromLabel = originLabel?.trim();
+  final toLabel = destinationLabel?.trim();
+  final hasFromLabel = fromLabel != null &&
+      fromLabel.isNotEmpty &&
+      !isGenericJourneyPlaceName(fromLabel);
+  final hasToLabel =
+      toLabel != null && toLabel.isNotEmpty && !isGenericJourneyPlaceName(toLabel);
+  if (!hasFromLabel && !hasToLabel) return option;
+
+  final legs = <RouteLeg>[];
+  for (var i = 0; i < option.legs.length; i++) {
+    var leg = option.legs[i];
+    if (hasFromLabel) {
+      if (i == 0 && isGenericJourneyPlaceName(leg.fromName)) {
+        leg = _legWithEndpointNames(leg, fromName: fromLabel);
+      }
+      if (isTransitLegMode(leg.mode) &&
+          isGenericJourneyPlaceName(leg.fromName)) {
+        leg = _legWithEndpointNames(leg, fromName: fromLabel);
+      }
+    }
+    if (hasToLabel) {
+      if (i == option.legs.length - 1 && isGenericJourneyPlaceName(leg.toName)) {
+        leg = _legWithEndpointNames(leg, toName: toLabel);
+      }
+      if (isTransitLegMode(leg.mode) &&
+          isGenericJourneyPlaceName(leg.toName)) {
+        leg = _legWithEndpointNames(leg, toName: toLabel);
+      }
+    }
+    legs.add(leg);
+  }
+
+  return RouteOption(
+    durationSeconds: option.durationSeconds,
+    transfers: option.transfers,
+    walkDistanceMeters: option.walkDistanceMeters,
+    estimatedPriceLei: option.estimatedPriceLei,
+    fareRule: option.fareRule,
+    legs: legs,
+  );
+}
+
+({String from, String to}) journeyEndpointNames(
+  RouteOption route, {
+  String? originLabel,
+  String? destinationLabel,
+}) {
+  return (
+    from: _resolvedJourneyEndpointName(
+          route: route,
+          isOrigin: true,
+          label: originLabel,
+        ) ??
+        '',
+    to: _resolvedJourneyEndpointName(
+          route: route,
+          isOrigin: false,
+          label: destinationLabel,
+        ) ??
+        '',
+  );
+}
+
+String savedJourneyTitle({
+  required String label,
+  required RouteOption route,
+}) {
+  final trimmedLabel = label.trim();
+  final lowerLabel = trimmedLabel.toLowerCase();
+  if (trimmedLabel.isNotEmpty &&
+      !isGenericJourneyPlaceName(trimmedLabel) &&
+      !lowerLabel.contains('origin') &&
+      !lowerLabel.contains('destination')) {
+    return trimmedLabel;
+  }
+  return routeJourneyTitle(route);
 }
 
 String encodeRouteMetadata(RouteOption option) => jsonEncode(option.toJson());

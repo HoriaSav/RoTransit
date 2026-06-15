@@ -2,15 +2,17 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:rotransit_frontend/l10n/app_localizations.dart';
 
 import '../../../core/branding/operator_branding.dart';
 import '../../../core/format/byte_size_format.dart';
 import '../../../core/config/api_config.dart';
+import '../../../core/theme/accent_badge_style.dart';
 import '../../../core/theme/app_extra_colors.dart';
-import '../../../core/network/api_client.dart';
-import '../../../core/ui/app_snackbar.dart';
+import '../../../core/errors/app_user_message.dart';
+import '../../../core/ui/user_feedback.dart';
 import '../../../core/state/locale_provider.dart';
 import '../../../core/state/transport_settings_provider.dart';
 import '../../../core/state/theme_mode_provider.dart';
@@ -24,6 +26,31 @@ import '../../shell/state/navigation_provider.dart';
 
 const _placeholderCityId = '00000000-0000-0000-0000-000000000001';
 
+String _friendlyOfflinePackSubtitle(
+  BuildContext context,
+  AppLocalizations l10n,
+  OfflineTransitMeta meta,
+) {
+  final downloaded = DateTime.tryParse(meta.downloadedAtIso);
+  final locale = Localizations.localeOf(context).toString();
+  final dateLabel = downloaded != null
+      ? DateFormat.yMMMd(locale).format(downloaded)
+      : null;
+  final week = meta.anchorMondayIso.trim();
+  if (dateLabel != null && week.isNotEmpty) {
+    return l10n.offlinePackDownloadedWithWeek(dateLabel, week);
+  }
+  if (dateLabel != null) return l10n.offlinePackDownloaded(dateLabel);
+  return l10n.offlinePackAvailableOnDevice;
+}
+
+String _truncatePackId(String value, {int max = 10}) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return '…';
+  if (trimmed.length <= max) return trimmed;
+  return '${trimmed.substring(0, max)}…';
+}
+
 class SettingsTab extends ConsumerStatefulWidget {
   const SettingsTab({super.key});
 
@@ -32,9 +59,9 @@ class SettingsTab extends ConsumerStatefulWidget {
 }
 
 class _SettingsTabState extends ConsumerState<SettingsTab> {
-  bool _notifications = true;
   String _version = '1.0';
   String _offlineTimetablesSubtitle = '—';
+  OfflineTransitMeta? _localOfflineMeta;
 
   @override
   void initState() {
@@ -63,6 +90,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     if (cityId.isEmpty || cityId == _placeholderCityId) {
       if (mounted) {
         setState(() {
+          _localOfflineMeta = null;
           _offlineTimetablesSubtitle = l10n.offlinePackChooseCityFirst;
         });
       }
@@ -75,12 +103,10 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
         .getMetaForCity(cityId);
     if (!mounted) return;
     setState(() {
-      if (meta == null) {
-        _offlineTimetablesSubtitle = l10n.offlinePackNoneYet;
-      } else {
-        _offlineTimetablesSubtitle =
-            l10n.offlineOnDevicePack(offlinePackLocalDisplayVersion(meta));
-      }
+      _localOfflineMeta = meta;
+      _offlineTimetablesSubtitle = meta == null
+          ? l10n.offlinePackNoneYet
+          : _friendlyOfflinePackSubtitle(context, l10n, meta);
     });
     unawaited(refreshOfflinePackCloudVersion(ref, cityId));
   }
@@ -139,19 +165,21 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     }
     final localLine = localMeta == null
         ? l10n.offlinePackNoneYet
-        : l10n.offlineOnDevicePack(offlinePackLocalDisplayVersion(localMeta));
+        : _friendlyOfflinePackSubtitle(context, l10n, localMeta);
     final cloudLine = cloudPack.metaEndpointMissing
         ? l10n.offlineMetaEndpointMissing
-        : l10n.offlineServerMeta(cloudPack.packVersion ?? '…');
+        : l10n.offlineServerMeta(
+            _truncatePackId(cloudPack.packVersion ?? '…'),
+          );
     return '$localLine\n$cloudLine';
   }
 
   Future<void> _pickTimetableDownload() async {
     final l10n = AppLocalizations.of(context)!;
     if (!ApiConfig.useBackend) {
-      showAppSnackBar(
+      showUserMessage(
         context,
-        SnackBar(content: Text(l10n.offlinePackNotAvailablePreview)),
+        AppUserMessage.custom(l10n.offlinePackNotAvailablePreview),
       );
       return;
     }
@@ -159,25 +187,38 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     final cityId = ref.read(searchMapStateProvider).cityId;
     final cityName = ref.read(searchMapStateProvider).cityName.trim();
     if (cityId.isEmpty || cityId == _placeholderCityId) {
-      showAppSnackBar(
+      showUserMessage(
         context,
-        SnackBar(content: Text(l10n.offlinePackChooseCityFirst)),
+        AppUserMessage.custom(
+          l10n.offlinePackChooseCityFirst,
+          severity: UserMessageSeverity.warning,
+        ),
       );
       return;
     }
 
     unawaited(refreshOfflinePackCloudVersion(ref, cityId));
 
+    final localMeta = await ref
+        .read(offlineTransitCacheRepositoryProvider)
+        .getMetaForCity(cityId);
+    if (!mounted) return;
+    final cloudPack = ref.read(offlinePackCloudStateProvider);
+    if (isOfflinePackUpToDate(local: localMeta, cloud: cloudPack)) {
+      showUserMessage(
+        context,
+        AppUserMessage.custom(
+          l10n.timetableDownloadAlreadyUpToDate,
+          severity: UserMessageSeverity.info,
+        ),
+      );
+      return;
+    }
+
     final TimetableDownloadSourceId? picked;
     if (kTimetableDownloadSources.length == 1) {
       picked = kTimetableDownloadSources.first.id;
     } else {
-      final localMeta = await ref
-          .read(offlineTransitCacheRepositoryProvider)
-          .getMetaForCity(cityId);
-      if (!mounted) return;
-
-      final cloudPack = ref.read(offlinePackCloudStateProvider);
       final downloading = ref.read(offlinePackSyncInFlightProvider);
       final scheme = Theme.of(context).colorScheme;
 
@@ -246,28 +287,25 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       if (!mounted) return;
       await _refreshOfflineTimetablesSubtitle();
       if (!mounted) return;
-      showAppSnackBar(
+      showUserMessage(
         context,
-        SnackBar(content: Text(l10n.timetableDownloadSuccess(displayCityName))),
+        AppUserMessage.custom(
+          l10n.timetableDownloadSuccess(displayCityName),
+          severity: UserMessageSeverity.success,
+        ),
       );
     } on OfflineTimetableDownloadException catch (e) {
       if (!mounted) return;
       final message = e.message == 'offline'
           ? l10n.timetableDownloadOffline
           : l10n.timetableDownloadFailed;
-      showAppSnackBar(
+      showUserMessage(
         context,
-        SnackBar(content: Text(message)),
+        AppUserMessage.custom(message, severity: UserMessageSeverity.error),
       );
     } catch (e) {
       if (!mounted) return;
-      showAppSnackBar(
-        context,
-        SnackBar(
-          content: Text(userFacingMessageForDioFailure(e)),
-          duration: const Duration(seconds: 8),
-        ),
-      );
+      showUserError(context, e);
     }
   }
 
@@ -280,12 +318,15 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     final cityState = ref.watch(searchMapStateProvider);
     final cityName =
         cityState.cityName.trim().isEmpty ? 'Brasov' : cityState.cityName;
-    final cityLogo = operatorLogoAssetForCity(
-      cityId: cityState.cityId,
-      cityName: cityState.cityName,
-    );
     final offlinePackSyncing = ref.watch(offlinePackSyncInFlightProvider);
     final downloadProgress = ref.watch(offlinePackDownloadProgressProvider);
+    final cloudPack = ref.watch(offlinePackCloudStateProvider);
+    final offlinePackUpToDate = isOfflinePackUpToDate(
+      local: _localOfflineMeta,
+      cloud: cloudPack,
+    );
+    final canPickTimetableDownload =
+        !offlinePackSyncing && !offlinePackUpToDate;
 
     ref.listen(searchMapStateProvider, (prev, next) {
       if (prev?.cityId != next.cityId) {
@@ -297,135 +338,107 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
         _refreshOfflineTimetablesSubtitle();
       }
     });
-    final extra = context.extraColors;
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: ColoredBox(
-        color: extra.tabBackground,
+        color: context.extraColors.tabBackground,
         child: SafeArea(
           top: false,
           bottom: false,
           child: ListView(
             padding: EdgeInsets.fromLTRB(
               16,
-              16,
+              14,
               16,
               shellBottomContentPadding(context),
             ),
             children: [
-              Text(
-                l10n.settingsTitle,
-                style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
+              _SettingsPageHeader(title: l10n.settingsTitle),
+              const SizedBox(height: 18),
+              _SettingsGroup(
+                children: [
+                  _SettingsNavRow(
+                    icon: Icons.location_city_rounded,
+                    title: l10n.city,
+                    subtitle: cityName,
+                    onTap: _pickCity,
+                  ),
+                  _SettingsDivider(),
+                  _SettingsNavRow(
+                    icon: Icons.cloud_download_outlined,
+                    title: l10n.offlineTimetables,
+                    subtitle: downloadProgress != null
+                        ? null
+                        : _offlineTimetablesSubtitle,
+                    subtitleWidget: downloadProgress != null
+                        ? _OfflineDownloadProgressSubtitle(
+                            progress: downloadProgress,
+                            statusText: _offlineDownloadStatusText(
+                              l10n,
+                              downloadProgress,
+                            ),
+                          )
+                        : null,
+                    trailing: offlinePackSyncing
+                        ? SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: scheme.primary,
+                            ),
+                          )
+                        : offlinePackUpToDate
+                            ? Icon(
+                                Icons.check_circle_rounded,
+                                size: 22,
+                                color: scheme.primary,
+                              )
+                            : null,
+                    onTap: canPickTimetableDownload
+                        ? _pickTimetableDownload
+                        : null,
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              Card(
-                child: Column(
-                  children: [
-                    ListTile(
-                      leading: cityLogo != null
-                          ? Image.asset(
-                              cityLogo,
-                              width: 40,
-                              height: 40,
-                              fit: BoxFit.contain,
-                              errorBuilder: (_, __, ___) => const Icon(
-                                Icons.location_city_rounded,
-                              ),
-                            )
-                          : const Icon(Icons.location_city_rounded),
-                      title: Text(l10n.city),
-                      subtitle: Text(cityName),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: _pickCity,
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.cloud_download_outlined),
-                      title: Text(l10n.offlineTimetables),
-                      subtitle: downloadProgress != null
-                          ? _OfflineDownloadProgressSubtitle(
-                              progress: downloadProgress,
-                              statusText: _offlineDownloadStatusText(
-                                l10n,
-                                downloadProgress,
-                              ),
-                            )
-                          : Text(_offlineTimetablesSubtitle),
-                      isThreeLine: downloadProgress != null,
-                      trailing: offlinePackSyncing
-                          ? null
-                          : const Icon(Icons.chevron_right),
-                      onTap: offlinePackSyncing ? null : _pickTimetableDownload,
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.language_rounded),
-                      title: Text(l10n.language),
-                      subtitle: Text(
-                        languageLabelForCode(l10n, locale.languageCode),
-                      ),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => _pickLanguage(l10n),
-                    ),
-                    const Divider(height: 1),
-                    SwitchListTile(
-                      value: _notifications,
-                      title: Text(l10n.notifications),
-                      onChanged: (value) =>
-                          setState(() => _notifications = value),
-                    ),
-                    SwitchListTile(
-                      value: isDark,
-                      title: Text(l10n.darkMode),
-                      onChanged: (value) =>
-                          ref.read(themeModeProvider.notifier).setDarkMode(value),
-                    ),
-                    SwitchListTile(
-                      value: teEnabled,
-                      title: Text(l10n.teTransport),
-                      onChanged: (value) => ref
-                          .read(teTransportEnabledProvider.notifier)
-                          .setEnabled(value),
-                    ),
-                  ],
-                ),
+              const SizedBox(height: 14),
+              _SettingsGroup(
+                children: [
+                  _SettingsNavRow(
+                    icon: Icons.language_rounded,
+                    title: l10n.language,
+                    subtitle: languageDisplayLabel(l10n, locale.languageCode),
+                    onTap: () => _pickLanguage(l10n),
+                  ),
+                  _SettingsDivider(),
+                  _SettingsToggleRow(
+                    icon: Icons.dark_mode_outlined,
+                    title: l10n.darkMode,
+                    value: isDark,
+                    onChanged: (value) =>
+                        ref.read(themeModeProvider.notifier).setDarkMode(value),
+                  ),
+                  _SettingsDivider(),
+                  _SettingsToggleRow(
+                    icon: Icons.train_outlined,
+                    title: l10n.teTransport,
+                    subtitle: l10n.teTransportSubtitle,
+                    value: teEnabled,
+                    onChanged: (value) => ref
+                        .read(teTransportEnabledProvider.notifier)
+                        .setEnabled(value),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              Card(
-                child: Column(
-                  children: [
-                    ListTile(
-                      title: Text(l10n.version),
-                      trailing: Text(_version),
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      title: Text(l10n.privacyPolicy),
-                      trailing: const Icon(Icons.chevron_right),
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      title: Text(l10n.termsOfUse),
-                      trailing: const Icon(Icons.chevron_right),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              Card(
-                child: Column(
-                  children: [
-                    ListTile(
-                      title: Text(l10n.help),
-                      trailing: const Icon(Icons.chevron_right),
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      title: Text(l10n.contactUs),
-                      trailing: const Icon(Icons.chevron_right),
-                    ),
-                  ],
-                ),
+              const SizedBox(height: 14),
+              _SettingsGroup(
+                children: [
+                  _SettingsInfoRow(
+                    title: l10n.version,
+                    value: _version,
+                  ),
+                ],
               ),
             ],
           ),
@@ -449,6 +462,10 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             final code = supportedAppLanguageCodes[index];
             final isSelected = code == current;
             return ListTile(
+              leading: Text(
+                languageFlagEmojiForCode(code),
+                style: const TextStyle(fontSize: 24, height: 1.1),
+              ),
               title: Text(languageLabelForCode(l10n, code)),
               trailing: isSelected
                   ? Icon(Icons.check_circle, color: scheme.primary)
@@ -551,20 +568,323 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       if (!mounted) return;
       await _refreshOfflineTimetablesSubtitle();
       if (!mounted) return;
-      showAppSnackBar(
+      showUserMessage(
         context,
-        SnackBar(content: Text(l10n.cityChangedTo(picked.name))),
+        AppUserMessage.custom(
+          l10n.cityChangedTo(picked.name),
+          severity: UserMessageSeverity.success,
+        ),
       );
     } catch (e) {
       if (!mounted) return;
-      showAppSnackBar(
-        context,
-        SnackBar(
-          content: Text(userFacingMessageForDioFailure(e)),
-          duration: const Duration(seconds: 8),
-        ),
-      );
+      showUserError(context, e);
     }
+  }
+}
+
+class _SettingsPageHeader extends StatelessWidget {
+  const _SettingsPageHeader({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Row(
+      children: [
+        Icon(
+          Icons.settings_rounded,
+          size: 22,
+          color: scheme.primary,
+        ),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            color: scheme.onSurface,
+            letterSpacing: -0.3,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SettingsGroup extends StatelessWidget {
+  const _SettingsGroup({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final extra = context.extraColors;
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = scheme.brightness == Brightness.dark;
+
+    return Material(
+      color: extra.recentTileBackground,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: extra.recentTileBorder),
+          boxShadow: isDark
+              ? null
+              : const [
+                  BoxShadow(
+                    color: Color(0x0A0A3E96),
+                    blurRadius: 8,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: children,
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsDivider extends StatelessWidget {
+  const _SettingsDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Divider(
+      height: 1,
+      thickness: 1,
+      indent: 58,
+      endIndent: 14,
+      color: context.extraColors.recentTileBorder,
+    );
+  }
+}
+
+class _SettingsIconBadge extends StatelessWidget {
+  const _SettingsIconBadge({required this.icon});
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final badge = accentBadgeColors(context);
+
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        color: badge.background,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      alignment: Alignment.center,
+      child: Icon(
+        icon,
+        size: 20,
+        color: badge.foreground,
+      ),
+    );
+  }
+}
+
+class _SettingsNavRow extends StatelessWidget {
+  const _SettingsNavRow({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    this.subtitleWidget,
+    this.trailing,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final Widget? subtitleWidget;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final enabled = onTap != null;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _SettingsIconBadge(icon: icon),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: enabled
+                            ? scheme.onSurface
+                            : scheme.onSurface.withValues(alpha: 0.55),
+                      ),
+                    ),
+                    if (subtitleWidget != null) ...[
+                      const SizedBox(height: 6),
+                      subtitleWidget!,
+                    ] else if (subtitle != null && subtitle!.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle!,
+                        style: TextStyle(
+                          fontSize: 13,
+                          height: 1.35,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              trailing ??
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 22,
+                    color: enabled
+                        ? mutedChromeColor(context)
+                        : scheme.onSurfaceVariant.withValues(alpha: 0.35),
+                  ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsToggleRow extends StatelessWidget {
+  const _SettingsToggleRow({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 8, 12, 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SettingsIconBadge(icon: icon),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurface,
+                  ),
+                ),
+                if (subtitle != null && subtitle!.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle!,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.35,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Switch.adaptive(
+            value: value,
+            onChanged: onChanged,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsInfoRow extends StatelessWidget {
+  const _SettingsInfoRow({
+    required this.title,
+    required this.value,
+  });
+
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final extra = context.extraColors;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      child: Row(
+        children: [
+          _SettingsIconBadge(icon: Icons.info_outline_rounded),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              title,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: scheme.onSurface,
+              ),
+            ),
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: extra.durationBadgeBackground,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Text(
+                value,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

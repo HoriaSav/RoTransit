@@ -1,5 +1,9 @@
 FROM opentripplanner/opentripplanner:2.9.0
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /var/opentripplanner
 
 # Config

@@ -61,6 +61,8 @@ class SearchMapState {
     this.mode = SheetMode.list,
     this.openedFromSavedFavorite = false,
     this.pendingDetailsExtent,
+    this.originLabel = '',
+    this.destinationLabel = '',
   });
 
   final String cityId;
@@ -76,6 +78,8 @@ class SearchMapState {
   final SheetMode mode;
   final bool openedFromSavedFavorite;
   final double? pendingDetailsExtent;
+  final String originLabel;
+  final String destinationLabel;
 
   SearchMapState copyWith({
     String? cityId,
@@ -92,6 +96,8 @@ class SearchMapState {
     bool? openedFromSavedFavorite,
     double? pendingDetailsExtent,
     bool clearPendingDetailsExtent = false,
+    String? originLabel,
+    String? destinationLabel,
   }) {
     return SearchMapState(
       cityId: cityId ?? this.cityId,
@@ -110,6 +116,8 @@ class SearchMapState {
       pendingDetailsExtent: clearPendingDetailsExtent
           ? null
           : (pendingDetailsExtent ?? this.pendingDetailsExtent),
+      originLabel: originLabel ?? this.originLabel,
+      destinationLabel: destinationLabel ?? this.destinationLabel,
     );
   }
 }
@@ -155,6 +163,18 @@ class SearchMapController extends StateNotifier<SearchMapState> {
       mode: SheetMode.list,
       openedFromSavedFavorite: false,
       pendingDetailsExtent: null,
+      originLabel: '',
+      destinationLabel: '',
+    );
+  }
+
+  void setJourneyLabels({
+    required String originLabel,
+    required String destinationLabel,
+  }) {
+    state = state.copyWith(
+      originLabel: originLabel,
+      destinationLabel: destinationLabel,
     );
   }
 
@@ -211,20 +231,11 @@ class SearchMapController extends StateNotifier<SearchMapState> {
 
   /// Leave trip details so reopening the route sheet shows the list, not details.
   void clearRouteSheetSelection() {
-    state = SearchMapState(
-      cityId: state.cityId,
-      cityName: state.cityName,
-      results: state.results,
-      visibleCount: state.visibleCount,
-      offset: state.offset,
-      limit: state.limit,
-      total: state.total,
-      hasMore: state.hasMore,
-      lastRequest: state.lastRequest,
+    state = state.copyWith(
       selectedOption: null,
       mode: SheetMode.list,
       openedFromSavedFavorite: false,
-      pendingDetailsExtent: null,
+      clearPendingDetailsExtent: true,
     );
   }
 

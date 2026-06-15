@@ -1,28 +1,18 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:rotransit_frontend/l10n/app_localizations.dart';
 
-import '../../core/branding/operator_branding.dart';
 import '../../core/theme/app_extra_colors.dart';
-import 'state/navigation_provider.dart';
 import 'shell_layout.dart';
 
-/// RATBV asset is wide; size by height so text stays readable in the header.
-const _kOperatorLogoHeight = 50.0;
-const _kOperatorLogoMaxWidth = 140.0;
-
 /// Solid top bar for the shell “frame” (content sits below this, not underneath it).
-class ShellBrandingHeader extends ConsumerWidget {
+class ShellBrandingHeader extends StatelessWidget {
   const ShellBrandingHeader({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final extra = context.extraColors;
-    final cityState = ref.watch(searchMapStateProvider);
-    final operatorLogo = operatorLogoAssetForCity(
-      cityId: cityState.cityId,
-      cityName: cityState.cityName,
-    );
+    final l10n = AppLocalizations.of(context)!;
 
     return SafeArea(
       bottom: false,
@@ -36,20 +26,23 @@ class ShellBrandingHeader extends ConsumerWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
-                Image.asset(
-                  'assets/icons/bus_noBG.png',
-                  height: 36,
-                  width: 36,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => Icon(
-                    Icons.directions_bus_rounded,
-                    size: 32,
-                    color: scheme.primary,
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.asset(
+                    'assets/app_icon.png',
+                    height: 36,
+                    width: 36,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Icon(
+                      Icons.directions_bus_rounded,
+                      size: 32,
+                      color: scheme.primary,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Text(
-                  'RoTransit',
+                  l10n.appTitle,
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
@@ -57,17 +50,6 @@ class ShellBrandingHeader extends ConsumerWidget {
                     color: scheme.primary,
                   ),
                 ),
-                const Spacer(),
-                if (operatorLogo != null)
-                  Image.asset(
-                    operatorLogo,
-                    height: _kOperatorLogoHeight,
-                    width: _kOperatorLogoMaxWidth,
-                    fit: BoxFit.contain,
-                    alignment: Alignment.centerRight,
-                    filterQuality: FilterQuality.high,
-                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                  ),
               ],
             ),
           ),

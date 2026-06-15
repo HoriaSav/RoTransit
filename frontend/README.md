@@ -8,10 +8,14 @@ Flutter client for Android/iOS:
 
 ## Backend base URL
 
-Default is `http://10.0.2.2:8085` and can be overridden:
+| Target | `API_BASE_URL` |
+|--------|----------------|
+| Android emulator (local) | `http://10.0.2.2:8085` (default) |
+| Physical phone (home server) | `https://api.horiasavin.me` |
 
 ```bash
-flutter run --dart-define=API_BASE_URL=https://your-backend-url
+# Physical device against the Cloudflare tunnel
+flutter run --dart-define=API_BASE_URL=https://api.horiasavin.me
 ```
 
 ## First run

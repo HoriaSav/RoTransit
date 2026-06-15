@@ -22,7 +22,9 @@ import com.rotransit.backend.model.City;
 import com.rotransit.backend.otp.OtpClient;
 import com.rotransit.backend.repository.CityRepository;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -475,6 +477,84 @@ class RouteServiceUnitTest {
                 LocalTime.of(18, 0));
 
         assertEquals("far", out.stopId());
+    }
+
+    @Test
+    void searchRoutesRetriesWhenCachedSessionHadNoOtpItineraries() throws Exception {
+        UUID cityId = UUID.fromString("18181818-1818-1818-1818-181818181818");
+        City city = mockCity(cityId, "Brasov", "http://otp:8080/otp");
+        when(cityRepository.findById(cityId)).thenReturn(Optional.of(city));
+        JsonNode emptyPlan = objectMapper.readTree("{\"plan\":{\"itineraries\":[]}}");
+        JsonNode plan = objectMapper.readTree("""
+                {"plan":{"itineraries":[{"duration":1200,"walkDistance":100,"legs":[
+                  {"mode":"BUS","route":{"gtfsId":"R1"},"from":{},"to":{},"startTime":1000,"endTime":2000,"distance":3000}
+                ]}]}}
+                """);
+        when(otpClient.searchRoutesWithWindow(anyString(), any(), anyInt())).thenReturn(emptyPlan, plan);
+        when(otpClient.searchRoutes(anyString(), any())).thenReturn(emptyPlan);
+
+        var first = routeService.searchRoutes(cityId, sampleQuery(), 0, 10);
+        assertTrue(first.routes().isEmpty());
+
+        var second = routeService.searchRoutes(cityId, sampleQuery(), 0, 10);
+        assertEquals(1, second.routes().size());
+        verify(otpClient, times(2)).searchRoutesWithWindow(anyString(), any(), anyInt());
+    }
+
+    @Test
+    void searchRoutesKeepsItinerariesAtOrAfterServiceTimeInServiceTimezone() throws Exception {
+        UUID cityId = UUID.fromString("17171717-1717-1717-1717-171717171717");
+        City city = mockCity(cityId, "Brasov", "http://otp:8080/otp");
+        when(cityRepository.findById(cityId)).thenReturn(Optional.of(city));
+
+        LocalDate serviceDate = LocalDate.of(2026, 6, 8);
+        LocalTime serviceTime = LocalTime.of(17, 25);
+        long departureAtServiceTime = LocalDateTime.of(serviceDate, serviceTime)
+                .atZone(ZoneId.of("Europe/Bucharest"))
+                .toInstant()
+                .toEpochMilli();
+        JsonNode plan = objectMapper.readTree("""
+                {"plan":{"itineraries":[{"duration":1200,"walkDistance":100,"legs":[
+                  {"mode":"BUS","route":{"gtfsId":"R1"},"from":{},"to":{},"startTime":%d,"endTime":%d,"distance":3000}
+                ]}]}}
+                """.formatted(departureAtServiceTime, departureAtServiceTime + 600_000));
+        when(otpClient.searchRoutesWithWindow(anyString(), any(), anyInt())).thenReturn(plan);
+        when(otpClient.searchRoutes(anyString(), any())).thenReturn(
+                objectMapper.readTree("{\"plan\":{\"itineraries\":[]}}"));
+
+        RouteSearchQuery query = new RouteSearchQuery(
+                "45.650,25.610",
+                "45.640,25.600",
+                serviceDate,
+                serviceTime,
+                1,
+                10);
+
+        var withServiceTimezone = routeServiceWithTimezone("Europe/Bucharest");
+        assertEquals(1, withServiceTimezone.searchRoutes(cityId, query, 0, 10).routes().size());
+
+        var withUtcTimezone = routeServiceWithTimezone("UTC");
+        assertTrue(
+                withUtcTimezone.searchRoutes(cityId, query, 0, 10).routes().isEmpty(),
+                "UTC service timezone should drop Bucharest-local departures before the shifted cutoff");
+    }
+
+    private RouteService routeServiceWithTimezone(String serviceTimezone) {
+        return new RouteService(
+                cityRepository,
+                otpClient,
+                gtfsReadService,
+                0,
+                3,
+                15,
+                64,
+                6,
+                120,
+                120,
+                128,
+                true,
+                serviceTimezone,
+                SYNC_RESOLVE_EXECUTOR);
     }
 
     private RouteSearchQuery sampleQuery() {

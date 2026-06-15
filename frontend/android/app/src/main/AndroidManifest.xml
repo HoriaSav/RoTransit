@@ -4,8 +4,8 @@
     <application
         android:label="RoTransit"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher"
+        android:icon="@mipmap/rotransit_launcher"
+        android:roundIcon="@mipmap/rotransit_launcher"
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"

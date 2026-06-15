@@ -9,9 +9,12 @@ import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:latlong2/latlong.dart' hide Path;
+import 'package:rotransit_frontend/l10n/app_localizations.dart';
 
 import '../../../core/format/distance_format.dart';
-import '../../../core/ui/app_snackbar.dart';
+import '../../../core/errors/app_user_message.dart';
+import '../../../core/errors/app_user_message_l10n.dart';
+import '../../../core/ui/user_feedback.dart';
 import '../../../core/theme/app_extra_colors.dart';
 import '../../../core/location/user_location_helpers.dart';
 import '../../../core/location/user_location_provider.dart';
@@ -61,16 +64,8 @@ bool _isTransitLeg(RouteLeg leg) {
   return mode != 'WALK' && mode != 'BICYCLE' && mode != 'CAR';
 }
 
-String _modeLabel(String mode) {
-  return switch (_normalizeMode(mode)) {
-    'BUS' => 'Bus',
-    'TROLLEYBUS' => 'Trolleybus',
-    'TRAM' => 'Tram',
-    'RAIL' => 'Train',
-    'SUBWAY' => 'Metro',
-    'WALK' => 'Walk',
-    _ => mode.trim().isEmpty ? 'Transit' : mode.trim(),
-  };
+String _legLabel(String mode, AppLocalizations l10n) {
+  return l10n.transitModeLabel(mode);
 }
 
 String _lineIdFromRouteId(String routeId) {
@@ -120,8 +115,8 @@ const EdgeInsets _kPillPadding =
     EdgeInsets.symmetric(horizontal: 7, vertical: 3);
 const double _kPillLineFontSize = 13;
 
-String _legBadgeLabel(RouteLeg leg) {
-  final mode = _modeLabel(leg.mode);
+String _legBadgeLabel(RouteLeg leg, AppLocalizations l10n) {
+  final mode = _legLabel(leg.mode, l10n);
   final lineId = _lineIdFromRouteId(leg.routeId);
   if (!_isTransitLeg(leg) || lineId.isEmpty) {
     return mode;
@@ -167,11 +162,14 @@ Widget _modeIconForMode(String mode, {double size = 18}) {
   return Icon(icon, size: size);
 }
 
-List<_TransitSummaryItem> _buildTransitSummary(List<RouteLeg> transitLegs) {
+List<_TransitSummaryItem> _buildTransitSummary(
+  List<RouteLeg> transitLegs,
+  AppLocalizations l10n,
+) {
   if (transitLegs.isEmpty) return const [];
   final items = <_TransitSummaryItem>[];
   for (final leg in transitLegs) {
-    final modeLabel = _modeLabel(leg.mode);
+    final modeLabel = _legLabel(leg.mode, l10n);
     final lineId = _lineIdFromRouteId(leg.routeId);
     if (items.isNotEmpty &&
         items.last.modeLabel == modeLabel &&
@@ -248,8 +246,9 @@ Widget _mapSheetBackIconButton({
   required BuildContext context,
   required VoidCallback onPressed,
 }) {
+  final l10n = AppLocalizations.of(context)!;
   return Tooltip(
-    message: 'Back',
+    message: l10n.commonBack,
     child: Material(
       color: Colors.transparent,
       child: InkWell(
@@ -276,10 +275,11 @@ class _TransitSummaryChipsRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final transitSummary = _buildTransitSummary(_transitLegs(option));
+    final l10n = AppLocalizations.of(context)!;
+    final transitSummary = _buildTransitSummary(_transitLegs(option), l10n);
     if (transitSummary.isEmpty) {
       return Text(
-        'Walking route',
+        l10n.mapWalkingRoute,
         style: TextStyle(
           fontSize: 14.5,
           fontWeight: FontWeight.w600,
@@ -628,12 +628,7 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
     } catch (_) {
       if (!mounted) return;
       ctrl.openDetails(option);
-      showAppSnackBar(
-        context,
-        const SnackBar(
-          content: Text('Could not load route shape. Showing simplified path.'),
-        ),
-      );
+      showUserMessage(context, AppUserMessages.routeShapeSimplified);
     }
   }
 
@@ -676,10 +671,7 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
       );
     } catch (_) {
       if (!mounted) return;
-      showAppSnackBar(
-        context,
-        const SnackBar(content: Text('Could not load more routes. Try again.')),
-      );
+      showUserMessage(context, AppUserMessages.loadMoreRoutesFailed);
     } finally {
       if (mounted) setState(() => _routeListLoadingMore = false);
     }
@@ -753,20 +745,13 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
       final targetLabel = selectionTarget == LocationSelectionTarget.from
           ? 'From'
           : 'To';
-      if (!mounted) return;
-      showAppSnackBar(
+      showUserMessage(
         context,
-        SnackBar(
-          content: Text('Selected map location for $targetLabel'),
-        ),
+        AppUserMessages.mapLocationPicked(targetLabel),
       );
       return;
     }
-    if (!mounted) return;
-    showAppSnackBar(
-        context,
-      SnackBar(content: Text('Selected: $point')),
-    );
+    showUserMessage(context, AppUserMessages.mapCoordinateTap(point));
   }
 
   void _syncMapRotation(double rotation) {
@@ -897,6 +882,7 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     ref.listen<bool>(showMapSheetProvider, (previous, next) {
       if (previous != true || next != false) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1210,7 +1196,7 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
                     const SizedBox(height: 10),
                     _MapControlButton(
                       onPressed: _resetNorth,
-                      tooltip: 'Rotate map to north',
+                      tooltip: l10n.mapRotateNorth,
                       child: _CompassFabFace(mapRotationDeg: _mapRotation),
                     ),
                   ],
@@ -1446,6 +1432,7 @@ class _RouteListPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final itemCount = options.isEmpty
         ? 1
         : options.length + (canLoadMore ? 1 : 0);
@@ -1484,11 +1471,9 @@ class _RouteListPanel extends StatelessWidget {
             itemCount: itemCount,
             itemBuilder: (context, index) {
         if (options.isEmpty) {
-          return const Padding(
-            padding: EdgeInsets.fromLTRB(16, 8, 16, 24),
-            child: Center(
-              child: Text('Search routes to see options here.'),
-            ),
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            child: Center(child: Text(l10n.mapSearchRoutesHint)),
           );
         }
         if (canLoadMore && index == options.length) {
@@ -1496,16 +1481,20 @@ class _RouteListPanel extends StatelessWidget {
               math.min(kRouteSearchPageSize, remainingToReveal);
           final String label;
           if (isLoadingMore) {
-            label = 'Loading…';
+            label = l10n.mapLoading;
           } else if (remainingOnServer > 0) {
-            final tripWord = batch == 1 ? 'trip' : 'trips';
             label = batch >= kRouteSearchPageSize
-                ? 'Load $kRouteSearchPageSize more ($remainingOnServer left)'
-                : 'Load $batch more $tripWord ($remainingOnServer left)';
+                ? l10n.mapLoadMoreTripsWithRemaining(
+                    kRouteSearchPageSize,
+                    remainingOnServer,
+                  )
+                : l10n.mapLoadMoreTripsWithRemaining(batch, remainingOnServer);
           } else {
+            final tripWord =
+                batch == 1 ? l10n.mapTripSingular : l10n.mapTripPlural;
             label = batch >= kRouteSearchPageSize
-                ? 'Load next $kRouteSearchPageSize trips'
-                : 'Load $batch more ${batch == 1 ? 'trip' : 'trips'}';
+                ? l10n.mapLoadNextTrips(kRouteSearchPageSize)
+                : l10n.mapLoadMoreTrips(batch, tripWord);
           }
           return Padding(
             padding: const EdgeInsets.all(12),
@@ -1613,7 +1602,7 @@ class _RouteListPanel extends StatelessWidget {
                               ),
                               const SizedBox(width: _kMetaIconTextGap),
                               Text(
-                                '${item.transfers} transfer${item.transfers == 1 ? '' : 's'}',
+                                l10n.mapTransferLabel(item.transfers),
                                 style: TextStyle(
                                   fontSize: 13,
                                   color: Theme.of(
@@ -1658,7 +1647,7 @@ class _RouteListPanel extends StatelessWidget {
                         ),
                         const SizedBox(height: _kDurationPriceGap),
                         Text(
-                          '${item.estimatedPriceLei} lei',
+                          l10n.mapPriceLei(item.estimatedPriceLei),
                           textAlign: TextAlign.right,
                           style: TextStyle(
                             fontWeight: FontWeight.w700,
@@ -1707,6 +1696,7 @@ class _RouteDetailsPanel extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final l10n = AppLocalizations.of(context)!;
     final timeFmt = DateFormat('h:mm a');
     final scheme = Theme.of(context).colorScheme;
     final legs = option.legs;
@@ -1749,7 +1739,10 @@ class _RouteDetailsPanel extends ConsumerWidget {
                     _TransitSummaryChipsRow(option: option),
                     const SizedBox(height: 8),
                     Text(
-                      '${option.transfers} transfer${option.transfers == 1 ? '' : 's'} • ${option.estimatedPriceLei} lei',
+                      l10n.mapTransfersAndPrice(
+                        l10n.mapTransferLabel(option.transfers),
+                        l10n.mapPriceLei(option.estimatedPriceLei),
+                      ),
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
@@ -1772,25 +1765,27 @@ class _RouteDetailsPanel extends ConsumerWidget {
                         width: double.infinity,
                         child: FilledButton.tonal(
                           onPressed: () async {
-                            await ref
-                                .read(saveRouteControllerProvider)
-                                .save(cityId: cityId, option: option);
+                            final mapState = ref.read(searchMapStateProvider);
+                            await ref.read(saveRouteControllerProvider).save(
+                                  cityId: cityId,
+                                  option: option,
+                                  originLabel: mapState.originLabel,
+                                  destinationLabel: mapState.destinationLabel,
+                                );
                             if (context.mounted) {
-                              showAppSnackBar(
-        context,
-                                const SnackBar(
-                                  content: Text('Added to favorites'),
-                                ),
+                              showUserMessage(
+                                context,
+                                AppUserMessages.addedToFavorites,
                               );
                             }
                           },
-                          child: const Text('Add to favorites'),
+                          child: Text(l10n.mapAddToFavorites),
                         ),
                       ),
                     ],
                     const SizedBox(height: 16),
                     Text(
-                      'Steps',
+                      l10n.mapSteps,
                       style: TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 14,
@@ -1817,7 +1812,11 @@ class _RouteDetailsPanel extends ConsumerWidget {
 }
 
 /// Primary title for a step: mode name + line pill using the same [Color] as the map leg.
-Widget _transitLineTitleRow(RouteLeg leg, ColorScheme scheme) {
+Widget _transitLineTitleRow(
+  RouteLeg leg,
+  ColorScheme scheme,
+  AppLocalizations l10n,
+) {
   final lineId = _lineIdFromRouteId(leg.routeId);
   if (_isTransitLeg(leg) && lineId.isNotEmpty) {
     return Wrap(
@@ -1826,7 +1825,7 @@ Widget _transitLineTitleRow(RouteLeg leg, ColorScheme scheme) {
       runSpacing: 6,
       children: [
         Text(
-          _modeLabel(leg.mode),
+          _legLabel(leg.mode, l10n),
           style: TextStyle(
             fontWeight: FontWeight.w700,
             fontSize: 16,
@@ -1838,7 +1837,7 @@ Widget _transitLineTitleRow(RouteLeg leg, ColorScheme scheme) {
     );
   }
   return Text(
-    _legBadgeLabel(leg),
+    _legBadgeLabel(leg, l10n),
     style: TextStyle(
       fontWeight: FontWeight.w700,
       fontSize: 16,
@@ -1862,6 +1861,7 @@ class _RouteTimelineLegRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final scheme = Theme.of(context).colorScheme;
     final variant = scheme.onSurfaceVariant;
     final start = DateTime.fromMillisecondsSinceEpoch(leg.startTime);
@@ -1922,7 +1922,7 @@ class _RouteTimelineLegRow extends StatelessWidget {
                           _modeIconForMode(leg.mode, size: 20),
                           const SizedBox(width: 8),
                           Expanded(
-                            child: _transitLineTitleRow(leg, scheme),
+                            child: _transitLineTitleRow(leg, scheme, l10n),
                           ),
                         ],
                       ),

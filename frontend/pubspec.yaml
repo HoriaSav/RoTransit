@@ -1,7 +1,7 @@
 name: rotransit_frontend
 description: RoTransit mobile app for route search and saved journeys.
 publish_to: "none"
-version: 0.1.0+2
+version: 0.1.0+9
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -40,9 +40,12 @@ dev_dependencies:
   flutter_launcher_icons: ^0.14.3
 
 flutter_launcher_icons:
-  android: true
+  android: "rotransit_launcher"
   ios: true
-  image_path: assets/app_icon.png
+  image_path: assets/launcher_icon.png
+  adaptive_icon_background: "#1C2D49"
+  adaptive_icon_foreground: assets/adaptive_icon_foreground.png
+  adaptive_icon_foreground_inset: 0
   remove_alpha_ios: true
   min_sdk_android: 21
 
@@ -50,6 +53,8 @@ flutter:
   generate: true
   uses-material-design: true
   assets:
+    - assets/app_icon.png
     - assets/icons/bus_noBG.png
     - assets/icons/cardinal-point.png
+    - assets/operators/ratBv_noBg.png
     - assets/operators/ratBv.png

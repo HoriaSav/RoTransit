@@ -5,6 +5,12 @@ import 'app_extra_colors.dart';
 class AppTheme {
   static const _seed = Color(0xFF0D4FB3);
   static const _primary = Color(0xFF0A3E96);
+  static const _darkPrimary = Color(0xFF6EA8FF);
+  static const _darkOnPrimary = Color(0xFF0A1628);
+  static const _darkPrimaryContainer = Color(0xFF2D4A73);
+  static const _darkOnPrimaryContainer = Color(0xFFE8F0FF);
+  static const _darkOnSurface = Color(0xFFE8EDF5);
+  static const _darkOnSurfaceVariant = Color(0xFFB8C4D6);
 
   static const authPrimaryBlue = Color(0xFF0A4FB8);
   static const authDarkButton = Color(0xFF121418);
@@ -37,14 +43,27 @@ class AppTheme {
     required AppExtraColors extra,
   }) {
     final isLight = brightness == Brightness.light;
-    final scheme = ColorScheme.fromSeed(
-      seedColor: _seed,
-      brightness: brightness,
-      primary: _primary,
-      surface: isLight ? const Color(0xFFF7F8F4) : const Color(0xFF121418),
-      surfaceContainerHighest:
-          isLight ? const Color(0xFFE8ECF2) : const Color(0xFF2A3441),
-    );
+    final scheme = isLight
+        ? ColorScheme.fromSeed(
+            seedColor: _seed,
+            brightness: Brightness.light,
+            primary: _primary,
+            surface: const Color(0xFFF7F8F4),
+            surfaceContainerHighest: const Color(0xFFE8ECF2),
+          )
+        : ColorScheme.fromSeed(
+            seedColor: _seed,
+            brightness: Brightness.dark,
+            primary: _darkPrimary,
+            onPrimary: _darkOnPrimary,
+            primaryContainer: _darkPrimaryContainer,
+            onPrimaryContainer: _darkOnPrimaryContainer,
+            onSurface: _darkOnSurface,
+            onSurfaceVariant: _darkOnSurfaceVariant,
+            outline: const Color(0xFF5A6B82),
+            surface: const Color(0xFF121418),
+            surfaceContainerHighest: const Color(0xFF344155),
+          );
 
     final borderRadius = BorderRadius.circular(12);
     final fieldRadius = BorderRadius.circular(10);
