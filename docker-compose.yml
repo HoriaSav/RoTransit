@@ -29,6 +29,12 @@ services:
     command: --build --serve
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/otp >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
 
   gtfs-import:
     build:
@@ -62,7 +68,7 @@ services:
       db:
         condition: service_healthy
       otp:
-        condition: service_started
+        condition: service_healthy
       gtfs-import:
         condition: service_completed_successfully
     environment:
@@ -72,6 +78,18 @@ services:
       DB_PASSWORD: "rotransit_password"
     ports:
       - "8085:8085"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: rotransit-cloudflared
+    restart: unless-stopped
+    # Token is read from TUNNEL_TOKEN in cloudflare/.env (not compose ${} interpolation).
+    command: tunnel --no-autoupdate run
+    env_file:
+      - ./cloudflare/.env
+    depends_on:
+      app:
+        condition: service_started
 
 volumes:
   rotransit_postgres_data:
