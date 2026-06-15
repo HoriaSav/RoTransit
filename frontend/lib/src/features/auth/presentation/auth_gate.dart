@@ -51,13 +51,10 @@ class AuthGate extends ConsumerWidget {
                       children: [
                         Column(
                           children: [
-                            Container(
-                              width: 88,
-                              height: 88,
-                              decoration: const BoxDecoration(
-                                color: AppTheme.authPrimaryBlue,
+                            DecoratedBox(
+                              decoration: BoxDecoration(
                                 borderRadius: AppTheme.authLogoRadius,
-                                boxShadow: [
+                                boxShadow: const [
                                   BoxShadow(
                                     color: Color(0x220A4FB8),
                                     blurRadius: 20,
@@ -65,10 +62,14 @@ class AuthGate extends ConsumerWidget {
                                   ),
                                 ],
                               ),
-                              child: const Icon(
-                                Icons.route_rounded,
-                                size: 44,
-                                color: Colors.white,
+                              child: ClipRRect(
+                                borderRadius: AppTheme.authLogoRadius,
+                                child: Image.asset(
+                                  'assets/app_icon.png',
+                                  width: 88,
+                                  height: 88,
+                                  fit: BoxFit.cover,
+                                ),
                               ),
                             ),
                             const SizedBox(height: 16),

@@ -60,6 +60,8 @@ class _MainShellState extends ConsumerState<MainShell> {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     final extra = context.extraColors;
+    final selectedTab = ref.watch(selectedTabProvider);
+    const busTabIndex = 1;
 
     return PopScope(
       canPop: false,
@@ -69,7 +71,7 @@ class _MainShellState extends ConsumerState<MainShell> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const ShellBrandingHeader(),
+          if (selectedTab != busTabIndex) const ShellBrandingHeader(),
           const Expanded(
             child: Stack(
               clipBehavior: Clip.hardEdge,

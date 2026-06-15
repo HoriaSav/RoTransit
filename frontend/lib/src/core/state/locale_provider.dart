@@ -44,3 +44,15 @@ String languageLabelForCode(AppLocalizations l10n, String code) {
     _ => l10n.languageEnglish,
   };
 }
+
+String languageFlagEmojiForCode(String code) {
+  return switch (code) {
+    'ro' => '🇷🇴',
+    'de' => '🇩🇪',
+    _ => '🇬🇧',
+  };
+}
+
+String languageDisplayLabel(AppLocalizations l10n, String code) {
+  return '${languageFlagEmojiForCode(code)} ${languageLabelForCode(l10n, code)}';
+}

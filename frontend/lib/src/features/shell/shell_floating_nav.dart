@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:rotransit_frontend/l10n/app_localizations.dart';
 
+import '../../core/theme/accent_badge_style.dart';
 import '../../core/theme/app_extra_colors.dart';
 import 'shell_layout.dart';
 
@@ -21,11 +22,17 @@ class ShellFloatingNavBar extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final scheme = Theme.of(context).colorScheme;
     final extra = context.extraColors;
+    final isLight = scheme.brightness == Brightness.light;
     return Material(
       color: extra.floatingNavBackground,
-      elevation: 0,
-      shadowColor: scheme.shadow,
-      borderRadius: BorderRadius.circular(24),
+      elevation: isLight ? 1 : 0,
+      shadowColor: isLight ? const Color(0x1A0A3E96) : scheme.shadow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(24),
+        side: isLight
+            ? BorderSide(color: extra.recentTileBorder)
+            : BorderSide.none,
+      ),
       clipBehavior: Clip.antiAlias,
       child: SizedBox(
         height: kShellFloatingNavHeight,
@@ -110,7 +117,9 @@ class _Slot extends StatelessWidget {
                     Icon(
                       selected ? selectedIcon : icon,
                       size: 24,
-                      color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                      color: selected
+                          ? selectedShellAccentColor(context)
+                          : scheme.onSurfaceVariant,
                     ),
                   ],
                 ),
@@ -125,7 +134,9 @@ class _Slot extends StatelessWidget {
                   fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                   letterSpacing: 0.12,
                   height: 1,
-                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
+                  color: selected
+                      ? selectedShellAccentColor(context)
+                      : scheme.onSurfaceVariant,
                 ),
               ),
             ],

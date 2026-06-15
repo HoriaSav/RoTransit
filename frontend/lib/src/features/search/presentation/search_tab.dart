@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:dio/dio.dart';
+import 'package:rotransit_frontend/l10n/app_localizations.dart';
 
 import '../../../core/config/api_config.dart';
 import '../../../core/theme/app_extra_colors.dart';
@@ -11,7 +12,8 @@ import '../../../core/format/distance_format.dart';
 import '../../../core/location/user_location_helpers.dart';
 import '../../../core/location/user_location_provider.dart';
 import '../../../core/network/connectivity_status.dart';
-import '../../../core/ui/app_snackbar.dart';
+import '../../../core/errors/app_user_message.dart';
+import '../../../core/ui/user_feedback.dart';
 import '../../routes/data/local_saved_routes_repository.dart';
 import '../../routes/data/offline_transit_cache_repository.dart';
 import '../../routes/data/route_api_repository.dart';
@@ -42,7 +44,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   TimeOfDay? _time;
   bool _loading = false;
   String? _cityId;
-  String _cityName = 'City';
+  String _cityName = 'RoTransit';
   StopSearchItem? _selectedFromStop;
   StopSearchItem? _selectedToStop;
 
@@ -148,21 +150,17 @@ class _SearchTabState extends ConsumerState<SearchTab> {
     }
     if (_cityId == null) {
       if (!mounted) return;
-      showAppSnackBar(
-        context,
-        const SnackBar(
-          content: Text('Could not load city context for station selection.'),
-        ),
-      );
+      showUserMessage(context, AppUserMessages.cityContextUnavailable);
       return;
     }
     if (!mounted) return;
+    final l10n = AppLocalizations.of(context)!;
     final initial = isFrom ? _fromCtrl.text : _toCtrl.text;
     final selected = await Navigator.of(context).push<_StationSelectionResult>(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (context) => _StationSearchSheet(
-          title: isFrom ? 'Departure' : 'Destination',
+          title: isFrom ? l10n.searchDeparture : l10n.searchDestination,
           cityId: _cityId,
           initialQuery: initial,
         ),
@@ -200,9 +198,10 @@ class _SearchTabState extends ConsumerState<SearchTab> {
             _cityName = 'RoTransit';
           });
         } else {
+          final l10n = AppLocalizations.of(context)!;
           setState(() {
             _cityId = _fallbackCityId;
-            _cityName = 'Preview mode';
+            _cityName = l10n.previewMode;
           });
         }
         return;
@@ -222,16 +221,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
         _cityId = null;
         _cityName = 'RoTransit';
       });
-      final status = e.response?.statusCode;
-      final path = e.requestOptions.path;
-      showAppSnackBar(
-        context,
-        SnackBar(
-          content: Text(
-            'City bootstrap failed ($status) on $path at ${ApiConfig.baseUrl}',
-          ),
-        ),
-      );
+      showUserError(context, e);
     } catch (_) {
       if (!mounted) return;
       if (ApiConfig.useBackend) {
@@ -240,9 +230,10 @@ class _SearchTabState extends ConsumerState<SearchTab> {
           _cityName = 'RoTransit';
         });
       } else {
+        final l10n = AppLocalizations.of(context)!;
         setState(() {
           _cityId = _fallbackCityId;
-          _cityName = 'Preview mode';
+          _cityName = l10n.previewMode;
         });
       }
     }
@@ -251,14 +242,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   void _startMapPick({required bool isFrom}) {
     ref.read(mapSelectionTargetProvider.notifier).state =
         isFrom ? LocationSelectionTarget.from : LocationSelectionTarget.to;
-    showAppSnackBar(
-        context,
-      SnackBar(
-        content: Text(
-          'Tap on the map to set ${isFrom ? 'From' : 'To'} location.',
-        ),
-      ),
-    );
+    showUserMessage(context, AppUserMessages.mapPickHint);
   }
 
   void _swapStations() {
@@ -308,20 +292,38 @@ class _SearchTabState extends ConsumerState<SearchTab> {
     if (legs.isEmpty) return;
     final first = legs.first;
     final last = legs.last;
+    final firstTransit = firstTransitLegOf(journey.route);
+    final lastTransit = lastTransitLegOf(journey.route);
+    var fromName = journeyEndpointNames(journey.route).from;
+    var toName = journeyEndpointNames(journey.route).to;
+    if (fromName.isEmpty || toName.isEmpty) {
+      final title = savedJourneyTitle(label: journey.label, route: journey.route);
+      final parts = title.split(' – ');
+      if (parts.length >= 2) {
+        if (fromName.isEmpty) fromName = parts.first.trim();
+        if (toName.isEmpty) toName = parts.last.trim();
+      }
+    }
+    if (fromName.isEmpty) {
+      fromName = firstTransit?.fromName ?? first.fromName;
+    }
+    if (toName.isEmpty) {
+      toName = lastTransit?.toName ?? last.toName;
+    }
     setState(() {
-      _fromCtrl.text = first.fromName;
-      _toCtrl.text = last.toName;
+      _fromCtrl.text = fromName;
+      _toCtrl.text = toName;
       _selectedFromStop = StopSearchItem(
         stopId: 'fav-from:${journey.id}',
-        name: first.fromName,
-        lat: first.fromLat,
-        lon: first.fromLon,
+        name: fromName,
+        lat: firstTransit?.fromLat ?? first.fromLat,
+        lon: firstTransit?.fromLon ?? first.fromLon,
       );
       _selectedToStop = StopSearchItem(
         stopId: 'fav-to:${journey.id}',
-        name: last.toName,
-        lat: last.toLat,
-        lon: last.toLon,
+        name: toName,
+        lat: lastTransit?.toLat ?? last.toLat,
+        lon: lastTransit?.toLon ?? last.toLon,
       );
       _date ??= DateTime.now();
       _time ??= TimeOfDay.now();
@@ -357,27 +359,29 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   String _resolvedRecentFromName({
     required StopSearchItem selectedFrom,
     required RouteSearchResponse response,
+    required AppLocalizations l10n,
   }) {
     if (!_isCoordinateLikeStop(selectedFrom)) return selectedFrom.name;
-    if (response.routes.isEmpty) return 'Origin';
+    if (response.routes.isEmpty) return l10n.origin;
     final option = response.routes.first;
     final firstTransit = _firstTransitLeg(option);
     final fallbackLeg = option.legs.isNotEmpty ? option.legs.first : null;
     final candidate = (firstTransit?.fromName ?? fallbackLeg?.fromName ?? '').trim();
-    return candidate.isEmpty ? 'Origin' : candidate;
+    return candidate.isEmpty ? l10n.origin : candidate;
   }
 
   String _resolvedRecentToName({
     required StopSearchItem selectedTo,
     required RouteSearchResponse response,
+    required AppLocalizations l10n,
   }) {
     if (!_isCoordinateLikeStop(selectedTo)) return selectedTo.name;
-    if (response.routes.isEmpty) return 'Destination';
+    if (response.routes.isEmpty) return l10n.destination;
     final option = response.routes.first;
     final lastTransit = _lastTransitLeg(option);
     final fallbackLeg = option.legs.isNotEmpty ? option.legs.last : null;
     final candidate = (lastTransit?.toName ?? fallbackLeg?.toName ?? '').trim();
-    return candidate.isEmpty ? 'Destination' : candidate;
+    return candidate.isEmpty ? l10n.destination : candidate;
   }
 
   Future<void> _search() async {
@@ -386,10 +390,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
         _toCtrl.text.trim().isEmpty ||
         _date == null ||
         _time == null) {
-      showAppSnackBar(
-        context,
-        const SnackBar(content: Text('Please complete From, To, Date, Time')),
-      );
+      showUserMessage(context, AppUserMessages.completeSearchFields);
       return;
     }
     if (_cityId == null) {
@@ -397,25 +398,13 @@ class _SearchTabState extends ConsumerState<SearchTab> {
     }
     if (_cityId == null) {
       if (!mounted) return;
-      showAppSnackBar(
-        context,
-        const SnackBar(
-          content: Text(
-            'Could not load cities from backend. Check backend/cities endpoint.',
-          ),
-        ),
-      );
+      showUserMessage(context, AppUserMessages.cityContextUnavailable);
       return;
     }
 
     if (!await isDeviceOnline()) {
       if (!mounted) return;
-      showAppSnackBar(
-        context,
-        const SnackBar(
-          content: Text('Route search requires an internet connection.'),
-        ),
-      );
+      showUserMessage(context, AppUserMessages.searchRequiresInternet);
       return;
     }
 
@@ -432,14 +421,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
       final toStop = _selectedToStop;
       if (fromStop == null || toStop == null) {
         if (!mounted) return;
-        showAppSnackBar(
-        context,
-          const SnackBar(
-            content: Text(
-              'Tap From/To and select both stations from the station picker (or map).',
-            ),
-          ),
-        );
+        showUserMessage(context, AppUserMessages.selectStationsFromPicker);
         return;
       }
 
@@ -509,11 +491,17 @@ class _SearchTabState extends ConsumerState<SearchTab> {
       final recentFromName = _resolvedRecentFromName(
         selectedFrom: fromStop,
         response: response,
+        l10n: AppLocalizations.of(context)!,
       );
       final recentToName = _resolvedRecentToName(
         selectedTo: toStop,
         response: response,
+        l10n: AppLocalizations.of(context)!,
       );
+      ref.read(searchMapStateProvider.notifier).setJourneyLabels(
+            originLabel: recentFromName,
+            destinationLabel: recentToName,
+          );
       if (mounted) {
         setState(() {
           _cityId = response.cityId;
@@ -543,40 +531,17 @@ class _SearchTabState extends ConsumerState<SearchTab> {
       ref.read(routeMapOverlaySuppressedProvider.notifier).state = false;
       ref.read(showMapSheetProvider.notifier).state = true;
       if (response.routes.isEmpty && mounted) {
-        showAppSnackBar(
-        context,
-          const SnackBar(content: Text('No routes found for selected inputs.')),
-        );
+        showUserMessage(context, AppUserMessages.noRoutesFound);
       }
       if (mounted) {
         debugPrint('SearchTab search completed in ${stopwatch.elapsedMilliseconds}ms');
       }
     } on DioException catch (e) {
       if (!mounted) return;
-      final status = e.response?.statusCode;
-      final data = e.response?.data;
-      final requestId = e.response?.headers.value('X-Request-Id');
-      final backendCode =
-          data is Map<String, dynamic> ? data['code'] as String? : null;
-      final msg = switch (status) {
-        400 => 'Invalid search parameters. Please review station/date/time.',
-        404 => 'City or route resource was not found on backend.',
-        502 => 'Routing service is unavailable right now. Try again shortly.',
-        _ => 'Could not contact backend. Check API URL and backend status.',
-      };
-      final suffix = [
-        if (backendCode != null && backendCode.isNotEmpty) backendCode,
-        if (requestId != null && requestId.isNotEmpty) 'req:$requestId',
-      ].join(' ');
-      final full = suffix.isEmpty ? msg : '$msg ($suffix)';
-      showAppSnackBar(context, SnackBar(content: Text(full)));
+      showUserError(context, e);
     } catch (_) {
       if (!mounted) return;
-      showAppSnackBar(
-        context,
-        const SnackBar(
-            content: Text('Unexpected error while searching routes.')),
-      );
+      showUserMessage(context, AppUserMessages.unexpectedError);
     } finally {
       stopwatch.stop();
       if (mounted) setState(() => _loading = false);
@@ -585,6 +550,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     ref.listen<SearchMapState>(searchMapStateProvider, (prev, next) {
       if (next.cityId.isEmpty || next.cityId == _cityId) return;
       setState(() {
@@ -601,16 +567,18 @@ class _SearchTabState extends ConsumerState<SearchTab> {
       if (next == null) return;
       setState(() {
         if (next.target == LocationSelectionTarget.from) {
-          _fromCtrl.text = 'Origin';
+          _fromCtrl.text = l10n.origin;
           _selectedFromStop = _parseCoordinateSelection(
             next.value,
             isFrom: true,
+            l10n: l10n,
           );
         } else {
-          _toCtrl.text = 'Destination';
+          _toCtrl.text = l10n.destination;
           _selectedToStop = _parseCoordinateSelection(
             next.value,
             isFrom: false,
+            l10n: l10n,
           );
         }
       });
@@ -618,8 +586,8 @@ class _SearchTabState extends ConsumerState<SearchTab> {
     });
 
     final dateLabel =
-        _date == null ? 'Select date' : DateFormat('MMM d, y').format(_date!);
-    final timeLabel = _time == null ? 'Select time' : _time!.format(context);
+        _date == null ? l10n.searchSelectDate : DateFormat('MMM d, y').format(_date!);
+    final timeLabel = _time == null ? l10n.searchSelectTime : _time!.format(context);
     final canSubmitSearch = _selectedFromStop != null &&
         _selectedToStop != null &&
         _date != null &&
@@ -698,7 +666,8 @@ class _SearchTabState extends ConsumerState<SearchTab> {
                         Column(
                           children: [
                             _StationField(
-                              label: 'From',
+                              label: l10n.searchFrom,
+                              hintText: l10n.searchSelectStop,
                               controller: _fromCtrl,
                               onTapPicker: () => _selectStation(isFrom: true),
                               border: fieldBorder,
@@ -707,7 +676,8 @@ class _SearchTabState extends ConsumerState<SearchTab> {
                             ),
                             const SizedBox(height: 8),
                             _StationField(
-                              label: 'To',
+                              label: l10n.searchTo,
+                              hintText: l10n.searchSelectStop,
                               controller: _toCtrl,
                               onTapPicker: () => _selectStation(isFrom: false),
                               border: fieldBorder,
@@ -725,7 +695,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
                             elevation: 1.5,
                             shadowColor: scheme.shadow,
                             child: IconButton(
-                              tooltip: 'Swap From and To',
+                              tooltip: l10n.searchSwapTooltip,
                               onPressed: _swapStations,
                               visualDensity: VisualDensity.compact,
                               constraints: const BoxConstraints.tightFor(
@@ -748,7 +718,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
                       children: [
                         Expanded(
                           child: _DateTimeField(
-                            label: 'Date',
+                            label: l10n.searchDate,
                             value: dateLabel,
                             onTap: _pickDate,
                             border: dateTimeBorder,
@@ -767,7 +737,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
                         const SizedBox(width: 8),
                         Expanded(
                           child: _DateTimeField(
-                            label: 'Time',
+                            label: l10n.searchTime,
                             value: timeLabel,
                             onTap: _pickTime,
                             border: dateTimeBorder,
@@ -799,8 +769,8 @@ class _SearchTabState extends ConsumerState<SearchTab> {
                                 height: 20,
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
-                            : const Text(
-                                'Search',
+                            : Text(
+                                l10n.searchButton,
                                 style: TextStyle(
                                   fontWeight: FontWeight.w600,
                                   letterSpacing: 0,
@@ -812,7 +782,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        'Recent',
+                        l10n.searchRecent,
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w500,
@@ -828,7 +798,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
                           return Align(
                             alignment: Alignment.centerLeft,
                             child: Text(
-                              'No recent searches yet.',
+                              l10n.searchNoRecent,
                               style: TextStyle(color: scheme.onSurfaceVariant),
                             ),
                           );
@@ -912,7 +882,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
                       error: (_, __) => Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          'Could not load recent searches.',
+                          l10n.searchCouldNotLoadRecent,
                           style: TextStyle(color: scheme.onSurfaceVariant),
                         ),
                       ),
@@ -932,6 +902,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   StopSearchItem? _parseCoordinateSelection(
     String value, {
     required bool isFrom,
+    required AppLocalizations l10n,
   }) {
     final parts = value.split(',');
     if (parts.length != 2) return null;
@@ -940,7 +911,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
     if (lat == null || lon == null) return null;
     return StopSearchItem(
       stopId: 'map:$lat,$lon',
-      name: isFrom ? 'Origin' : 'Destination',
+      name: isFrom ? l10n.origin : l10n.destination,
       lat: lat,
       lon: lon,
     );
@@ -950,6 +921,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
 class _StationField extends StatefulWidget {
   const _StationField({
     required this.label,
+    required this.hintText,
     required this.controller,
     required this.onTapPicker,
     required this.border,
@@ -958,6 +930,7 @@ class _StationField extends StatefulWidget {
   });
 
   final String label;
+  final String hintText;
   final TextEditingController controller;
   final VoidCallback onTapPicker;
   final OutlineInputBorder border;
@@ -1006,7 +979,7 @@ class _StationFieldState extends State<_StationField> {
             labelText: widget.label,
             labelStyle: widget.labelStyle,
             floatingLabelStyle: widget.labelStyle,
-            hintText: 'Select stop',
+            hintText: widget.hintText,
             hintStyle: widget.fieldStyle.copyWith(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
               fontWeight: FontWeight.w400,
@@ -1286,25 +1259,22 @@ class _StationSearchSheetState extends ConsumerState<_StationSearchSheet> {
   }
 
   Future<void> _pickCurrentLocation() async {
+    final l10n = AppLocalizations.of(context)!;
     final loc = await ref
         .read(userLocationProvider.notifier)
         .resolve(forceFresh: true);
     if (!mounted) return;
     if (!loc.hasFix) {
-      final message = await userLocationFailureMessage();
+      final failure = await localizedUserLocationFailure(l10n);
       if (!mounted) return;
-      final openSettings = message.contains('Settings');
-      showAppSnackBar(
+      showUserMessage(
         context,
-        SnackBar(
-          content: Text(message),
-          action: openSettings
-              ? SnackBarAction(
-                  label: 'Settings',
-                  onPressed: openUserLocationSettings,
-                )
-              : null,
+        AppUserMessage.custom(
+          failure.message,
+          severity: UserMessageSeverity.warning,
+          actionLabel: failure.showSettingsAction ? l10n.openSettings : null,
         ),
+        onAction: failure.showSettingsAction ? openUserLocationSettings : null,
       );
       return;
     }
@@ -1314,7 +1284,7 @@ class _StationSearchSheetState extends ConsumerState<_StationSearchSheet> {
       _StationSelectionResult(
         station: StopSearchItem(
           stopId: 'gps:$latStr,$lonStr',
-          name: 'Current location',
+          name: l10n.searchCurrentLocation,
           lat: loc.lat!,
           lon: loc.lon!,
         ),
@@ -1324,6 +1294,7 @@ class _StationSearchSheetState extends ConsumerState<_StationSearchSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final userLoc = ref.watch(userLocationProvider);
     final scheme = Theme.of(context).colorScheme;
     return Scaffold(
@@ -1336,7 +1307,7 @@ class _StationSearchSheetState extends ConsumerState<_StationSearchSheet> {
               const _StationSelectionResult(pickOnMap: true),
             ),
             icon: const Icon(Icons.map_outlined),
-            label: const Text('Select on map'),
+            label: Text(l10n.searchSelectOnMap),
           ),
           const SizedBox(width: 8),
         ],
@@ -1349,9 +1320,9 @@ class _StationSearchSheetState extends ConsumerState<_StationSearchSheet> {
               TextField(
                 controller: _queryCtrl,
                 autofocus: true,
-                decoration: const InputDecoration(
-                  hintText: 'Search station',
-                  prefixIcon: Icon(Icons.search),
+                decoration: InputDecoration(
+                  hintText: l10n.searchStationHint,
+                  prefixIcon: const Icon(Icons.search),
                 ),
               ),
               const SizedBox(height: 10),
@@ -1372,13 +1343,13 @@ class _StationSearchSheetState extends ConsumerState<_StationSearchSheet> {
                                 Icons.my_location,
                                 color: scheme.onSurface,
                               ),
-                              title: const Text('Current location'),
+                              title: Text(l10n.searchCurrentLocation),
                               subtitle: Text(
                                 userLoc.hasFix
-                                    ? 'Using your GPS position'
+                                    ? l10n.searchUsingGps
                                     : (userLoc.resolveFinished
-                                        ? 'Tap to retry — enable precise location'
-                                        : 'Getting your location...'),
+                                        ? l10n.searchTapToRetryLocation
+                                        : l10n.searchGettingLocation),
                                 style: TextStyle(
                                   color: userLoc.hasFix
                                       ? scheme.onSurfaceVariant
@@ -1393,8 +1364,8 @@ class _StationSearchSheetState extends ConsumerState<_StationSearchSheet> {
                           if (_results.isEmpty) {
                             final q = _queryCtrl.text.trim();
                             final msg = q.isEmpty
-                                ? 'No nearby stops. Search above or use Select on map.'
-                                : 'No matches for your search. Try another query or Select on map.';
+                                ? l10n.searchNoNearbyStops
+                                : l10n.searchNoMatches;
                             return ListTile(
                               title: Text(
                                 msg,
@@ -1417,8 +1388,8 @@ class _StationSearchSheetState extends ConsumerState<_StationSearchSheet> {
                                   ),
                                 )
                               : (userLoc.resolveFinished
-                                  ? 'Enable location for distance'
-                                  : 'Waiting for GPS...');
+                                  ? l10n.searchEnableLocationForDistance
+                                  : l10n.searchWaitingForGps);
                           return ListTile(
                             leading:
                                 const Icon(Icons.location_on_outlined),

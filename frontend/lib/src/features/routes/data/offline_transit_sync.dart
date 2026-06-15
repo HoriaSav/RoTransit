@@ -7,6 +7,7 @@ import '../../../core/config/api_config.dart';
 import '../../../core/network/connectivity_status.dart';
 import '../../../core/time/week_anchor.dart';
 import '../../saved/state/saved_providers.dart';
+import 'offline_transit_cache_repository.dart';
 import 'route_api_repository.dart';
 
 const _previewPlaceholderCityId = '00000000-0000-0000-0000-000000000001';
@@ -56,6 +57,20 @@ final offlinePackDownloadProgressProvider =
 final offlinePackSyncInFlightProvider = Provider<bool>((ref) {
   return ref.watch(offlinePackDownloadProgressProvider) != null;
 });
+
+/// True when [local] is installed and matches the server pack (or server meta is unavailable).
+bool isOfflinePackUpToDate({
+  required OfflineTransitMeta? local,
+  required OfflinePackCloudState cloud,
+}) {
+  if (local == null) return false;
+  if (cloud.metaEndpointMissing) return true;
+  final cloudVersion = cloud.packVersion?.trim() ?? '';
+  if (cloudVersion.isEmpty) return true;
+  final localVersion = local.packVersion.trim();
+  if (localVersion.isEmpty) return false;
+  return cloudVersion == localVersion;
+}
 
 class _DownloadByteProgress {
   DateTime? _startedAt;

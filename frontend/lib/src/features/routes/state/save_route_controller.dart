@@ -22,12 +22,24 @@ class SaveRouteController {
     required String cityId,
     required RouteOption option,
     String? label,
+    String? originLabel,
+    String? destinationLabel,
   }) async {
     final user = _ref.read(sessionProvider);
     final deviceUserId = user?.id ?? _guestDeviceUserId;
-    final resolvedLabel = label ?? routeJourneyTitle(option);
+    final normalized = routeOptionWithJourneyLabels(
+      option,
+      originLabel: originLabel,
+      destinationLabel: destinationLabel,
+    );
+    final resolvedLabel = label ??
+        routeJourneyTitle(
+          normalized,
+          originLabel: originLabel,
+          destinationLabel: destinationLabel,
+        );
 
-    final metadata = encodeRouteMetadata(option);
+    final metadata = encodeRouteMetadata(normalized);
     await _ref.read(localSavedRoutesRepositoryProvider).save(
           deviceUserId: deviceUserId,
           cityId: cityId,

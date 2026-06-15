@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:geolocator/geolocator.dart';
+import 'package:rotransit_frontend/l10n/app_localizations.dart';
 
 /// Fallback when GPS is denied, off, or unavailable (Brașov area; map framing only).
 const double kDefaultSearchRefLat = 45.6579;
@@ -34,24 +35,31 @@ bool isReliableUserPosition(Position position) {
 Future<bool> openUserLocationSettings() => Geolocator.openAppSettings();
 
 /// User-facing hint when [tryGetCurrentUserLatLon] returns null.
-Future<String> userLocationFailureMessage() async {
+Future<({String message, bool showSettingsAction})>
+    localizedUserLocationFailure(AppLocalizations l10n) async {
   if (!await Geolocator.isLocationServiceEnabled()) {
-    return 'Location services are turned off on this device.';
+    return (message: l10n.locationServicesOff, showSettingsAction: false);
   }
   final permission = await Geolocator.checkPermission();
   if (permission == LocationPermission.deniedForever) {
-    return 'Location permission is blocked. Open Settings to allow precise location.';
+    return (
+      message: l10n.locationPermissionBlocked,
+      showSettingsAction: true,
+    );
   }
   if (permission == LocationPermission.denied) {
-    return 'Location permission was denied.';
+    return (message: l10n.locationPermissionDenied, showSettingsAction: false);
   }
   if (!kIsWeb && Platform.isIOS) {
     final accuracy = await Geolocator.getLocationAccuracy();
     if (accuracy == LocationAccuracyStatus.reduced) {
-      return 'Enable Precise Location in Settings for accurate stop distances.';
+      return (
+        message: l10n.locationPreciseRequired,
+        showSettingsAction: true,
+      );
     }
   }
-  return 'Could not get a reliable GPS fix. Try outdoors, enable precise location, or use Select on map.';
+  return (message: l10n.locationGpsFailed, showSettingsAction: false);
 }
 
 /// Best-effort current position for ranking/distance; does not throw.
