@@ -4,27 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../config/api_config.dart';
 
-/// Short hint for SnackBars when the device cannot reach the backend.
-String userFacingMessageForDioFailure(Object error) {
-  if (error is! DioException) {
-    return 'Network error. Please try again.';
-  }
-  switch (error.type) {
-    case DioExceptionType.connectionTimeout:
-    case DioExceptionType.sendTimeout:
-    case DioExceptionType.receiveTimeout:
-      return 'Server unreachable (timeout). Same Wi‑Fi as the PC? '
-          'Allow inbound TCP 8085 on the PC firewall. '
-          'API_BASE_URL must be the PC LAN IP (not 10.0.2.2 on a real phone).';
-    case DioExceptionType.connectionError:
-      return 'Connection failed. Check that the backend is running and '
-          'the phone uses the correct API_BASE_URL for your network.';
-    case DioExceptionType.badCertificate:
-      return 'TLS certificate error. Use http:// for local dev or fix certificates.';
-    default:
-      return 'Could not reach the server. Please try again.';
-  }
-}
+export '../errors/app_user_message.dart' show userFacingMessageForDioFailure;
 
 final dioProvider = Provider<Dio>((ref) {
   final dio = Dio(

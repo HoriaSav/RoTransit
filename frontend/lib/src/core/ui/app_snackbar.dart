@@ -3,16 +3,19 @@ import 'package:flutter/material.dart';
 const _estimatedSnackBarHeight = 56.0;
 const _topGap = 12.0;
 const _horizontalInset = 16.0;
+const _verticalOffsetFraction = 0.15;
 
 EdgeInsets topSnackBarMargin(BuildContext context) {
   final media = MediaQuery.of(context);
+  final screenHeight = media.size.height;
   return EdgeInsets.only(
     left: _horizontalInset,
     right: _horizontalInset,
-    bottom: media.size.height -
+    bottom: screenHeight -
         media.padding.top -
         _topGap -
-        _estimatedSnackBarHeight,
+        _estimatedSnackBarHeight -
+        screenHeight * _verticalOffsetFraction,
   );
 }
 
