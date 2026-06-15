@@ -1,5 +1,22 @@
 transit_app_architecture_full.md
 
+# Local documentation (thesis, setup notes — kept on disk, not in git)
+doc/
+
+# Cursor IDE local project settings
+.cursor/
+
+# Python caches / virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editor swap and backup files
+*~
+*.swp
+*.swo
+
 # OTP data
 otp/gtfs/
 otp/osm/

@@ -5,7 +5,12 @@
 .packages
 build/
 pubspec.lock
+.metadata
 
 # IDE
 .idea/
 .vscode/
+*.iml
+
+# Coverage
+coverage/
