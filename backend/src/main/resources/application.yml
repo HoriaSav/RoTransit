@@ -23,6 +23,8 @@ management:
         include: health,info
 
 rotransit:
+  # Wall-clock timezone for serviceDate/serviceTime and OTP departure filtering (must match the GTFS graph).
+  service-timezone: ${ROTRANSIT_SERVICE_TIMEZONE:Europe/Bucharest}
   otp:
     enable-path-probing: ${ROTRANSIT_OTP_ENABLE_PATH_PROBING:false}
   routes:

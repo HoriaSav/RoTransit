@@ -43,6 +43,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -120,6 +121,11 @@ public class RouteService {
         private Instant expiresAt() {
             return expiresAt;
         }
+
+        /** OTP returned no itineraries (e.g. still starting up); do not cache — allow immediate retry. */
+        private boolean isUnproductive() {
+            return scanComplete && rawMerged.isEmpty();
+        }
     }
 
     private record CachedDestinationResolve(NearbyStopResponse stop, Instant expiresAt) {}
@@ -142,6 +148,7 @@ public class RouteService {
     private final int routeSearchSessionTtlSeconds;
     private final int routeSearchCacheMaxEntries;
     private final boolean routeSearchWindowFirstEnabled;
+    private final ZoneId serviceZoneId;
 
     @Autowired
     public RouteService(
@@ -157,6 +164,7 @@ public class RouteService {
             @Value("${rotransit.routes.search.session-ttl-seconds:120}") int routeSearchSessionTtlSeconds,
             @Value("${rotransit.routes.search.cache-max-entries:128}") int routeSearchCacheMaxEntries,
             @Value("${rotransit.routes.search.window-first-enabled:true}") boolean routeSearchWindowFirstEnabled,
+            @Value("${rotransit.service-timezone:Europe/Bucharest}") String serviceTimezone,
             @Qualifier("stopResolveExecutor") Executor stopResolveExecutor) {
         this.cityRepository = cityRepository;
         this.otpClient = otpClient;
@@ -170,6 +178,7 @@ public class RouteService {
         this.routeSearchSessionTtlSeconds = Math.max(5, routeSearchSessionTtlSeconds);
         this.routeSearchCacheMaxEntries = Math.max(16, routeSearchCacheMaxEntries);
         this.routeSearchWindowFirstEnabled = routeSearchWindowFirstEnabled;
+        this.serviceZoneId = ZoneId.of(serviceTimezone);
         this.stopResolveExecutor = stopResolveExecutor;
     }
 
@@ -180,7 +189,8 @@ public class RouteService {
             GtfsReadService gtfsReadService,
             Executor stopResolveExecutor) {
         this(cityRepository, otpClient, gtfsReadService, 0, 3,
-                ROUTE_SEARCH_SHIFT_STEP_MINUTES, 64, 6, 120, 120, 128, true, stopResolveExecutor);
+                ROUTE_SEARCH_SHIFT_STEP_MINUTES, 64, 6, 120, 120, 128, true,
+                "Europe/Bucharest", stopResolveExecutor);
     }
 
     public RouteSearchResponse searchRoutes(
@@ -203,12 +213,21 @@ public class RouteService {
         Instant now = Instant.now();
         IncrementalRouteSearchSession session = routeSearchSessionCache.get(sessionKey);
         boolean cacheHit = session != null && !session.isExpired(now);
-        if (!cacheHit) {
+        if (cacheHit && session.isUnproductive()) {
+            routeSearchSessionCache.remove(sessionKey);
+            session = null;
+            cacheHit = false;
+        }
+        if (session == null) {
             session = newIncrementalSession(city.getOtpBaseUrl(), query, now);
-            routeSearchSessionCache.put(sessionKey, session);
         }
         int targetSize = safeOffset + safeLimit;
         fillSessionUntil(session, targetSize);
+        if (session.isUnproductive()) {
+            routeSearchSessionCache.remove(sessionKey);
+        } else {
+            routeSearchSessionCache.put(sessionKey, session);
+        }
         List<RouteOptionResponse> routes = session.routes();
         int total = routes.size();
         boolean hasMore = !session.scanComplete();
@@ -245,7 +264,7 @@ public class RouteService {
     private IncrementalRouteSearchSession newIncrementalSession(
             String otpBaseUrl, RouteSearchQuery query, Instant now) {
         long minDepartureMillis = LocalDateTime.of(query.serviceDate(), query.serviceTime())
-                .atZone(java.time.ZoneId.systemDefault())
+                .atZone(serviceZoneId)
                 .toInstant()
                 .toEpochMilli();
         return new IncrementalRouteSearchSession(
