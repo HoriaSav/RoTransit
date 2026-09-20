@@ -7,7 +7,7 @@ import com.rotransit.backend.dto.OfflinePackMetaResponse;
 import com.rotransit.backend.dto.OfflinePackResponse;
 import com.rotransit.backend.dto.RouteStopResponse;
 import com.rotransit.backend.dto.StopTimetableResponse;
-import com.rotransit.backend.service.RouteService;
+import com.rotransit.backend.service.TransitCatalogService;
 import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDate;
 import java.util.List;
@@ -27,17 +27,17 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/buses")
 public class TransitCatalogController {
 
-    private final RouteService routeService;
+    private final TransitCatalogService transitCatalogService;
     private final ObjectMapper objectMapper;
 
-    public TransitCatalogController(RouteService routeService, ObjectMapper objectMapper) {
-        this.routeService = routeService;
+    public TransitCatalogController(TransitCatalogService transitCatalogService, ObjectMapper objectMapper) {
+        this.transitCatalogService = transitCatalogService;
         this.objectMapper = objectMapper;
     }
 
     @GetMapping
     public List<BusLineResponse> listBuses(@RequestParam UUID cityId) {
-        return routeService.listBusLines(cityId);
+        return transitCatalogService.listBusLines(cityId);
     }
 
     @GetMapping("/offline-pack-meta")
@@ -45,7 +45,7 @@ public class TransitCatalogController {
             @RequestParam UUID cityId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate anchorMonday
     ) {
-        return routeService.buildOfflinePackMeta(cityId, anchorMonday);
+        return transitCatalogService.buildOfflinePackMeta(cityId, anchorMonday);
     }
 
     @GetMapping("/offline-pack")
@@ -53,10 +53,12 @@ public class TransitCatalogController {
             @RequestParam UUID cityId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate anchorMonday
     ) throws JsonProcessingException {
-        OfflinePackResponse pack = routeService.buildOfflinePack(cityId, anchorMonday);
+        OfflinePackResponse pack = transitCatalogService.buildOfflinePack(cityId, anchorMonday);
         byte[] body = objectMapper.writeValueAsBytes(pack);
+        String filename = "rotransit-offline-pack-" + cityId + "-" + anchorMonday + ".json";
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_JSON)
+                .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
                 .contentLength(body.length)
                 .body(body);
     }
@@ -67,7 +69,7 @@ public class TransitCatalogController {
             @RequestParam UUID cityId,
             @RequestParam(required = false) String directionId
     ) {
-        return routeService.routeStops(cityId, routeId, directionId);
+        return transitCatalogService.routeStops(cityId, routeId, directionId);
     }
 
     @GetMapping("/{routeId}/timetable")
@@ -78,6 +80,6 @@ public class TransitCatalogController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate serviceDate,
             @RequestParam(required = false) String directionId
     ) {
-        return routeService.routeStopTimes(cityId, routeId, stopId, serviceDate, directionId);
+        return transitCatalogService.routeStopTimes(cityId, routeId, stopId, serviceDate, directionId);
     }
 }

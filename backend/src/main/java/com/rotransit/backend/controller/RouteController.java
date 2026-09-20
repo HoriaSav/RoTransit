@@ -2,7 +2,7 @@ package com.rotransit.backend.controller;
 
 import com.rotransit.backend.dto.NearbyStopResponse;
 import com.rotransit.backend.dto.RouteSearchResponse;
-import com.rotransit.backend.service.RouteSearchQuery;
+import com.rotransit.backend.dto.RouteSearchQuery;
 import com.rotransit.backend.service.RouteService;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -41,15 +41,13 @@ public class RouteController {
             @RequestParam(defaultValue = "10") @Min(1) @Max(50) int limit,
             @RequestParam(defaultValue = "false") boolean includeGeometry
     ) {
-        int itineraryCount = Math.min(40, Math.max(8, (offset + limit) * 2));
-        return routeService.searchRoutes(cityId, new RouteSearchQuery(
-                origin,
-                destination,
-                serviceDate,
-                serviceTime,
-                passengerCount,
-                itineraryCount
-        ), offset, limit, includeGeometry);
+        return routeService.searchRoutes(
+                cityId,
+                RouteSearchQuery.forPagedSearch(
+                        origin, destination, serviceDate, serviceTime, passengerCount, offset, limit),
+                offset,
+                limit,
+                includeGeometry);
     }
 
     @GetMapping("/stops/nearby")

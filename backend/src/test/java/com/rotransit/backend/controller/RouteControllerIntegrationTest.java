@@ -39,8 +39,6 @@ class RouteControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM cities",
             "INSERT INTO cities (id, name, country, otp_base_url) VALUES ('11111111-1111-1111-1111-111111111111', 'Brasov', 'Romania', 'http://otp:8080/otp')"
     })
@@ -116,8 +114,6 @@ class RouteControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM cities",
             "INSERT INTO cities (id, name, country, otp_base_url) VALUES ('22222222-2222-2222-2222-222222222222', 'Brasov', 'Romania', 'http://otp:8080/otp')"
     })
@@ -140,8 +136,6 @@ class RouteControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM cities",
             "INSERT INTO cities (id, name, country, otp_base_url) VALUES ('13131313-1313-1313-1313-131313131313', 'Brasov', 'Romania', 'http://otp:8080/otp')"
     })
@@ -178,8 +172,6 @@ class RouteControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM gtfs_stop_times",
             "DELETE FROM gtfs_trips",
             "DELETE FROM gtfs_routes",
@@ -204,8 +196,6 @@ class RouteControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM cities",
             "INSERT INTO cities (id, name, country, otp_base_url) VALUES ('12121212-1212-1212-1212-121212121212', 'Brasov', 'Romania', 'http://otp:8080/otp')"
     })
@@ -266,8 +256,6 @@ class RouteControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM cities",
             "INSERT INTO cities (id, name, country, otp_base_url) VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'Brasov', 'Romania', 'http://otp:8080/otp')"
     })

@@ -11,8 +11,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.JdbcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 
 @JdbcTest
+@ActiveProfiles("test")
 @Import(GtfsReadService.class)
 class GtfsReadServiceJdbcTest {
 
@@ -29,31 +31,6 @@ class GtfsReadServiceJdbcTest {
         jdbcTemplate.execute("DELETE FROM gtfs_routes");
         jdbcTemplate.execute("DELETE FROM gtfs_stops");
 
-        jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS gtfs_calendar (
-                    city_id UUID NOT NULL,
-                    service_id VARCHAR(255) NOT NULL,
-                    monday INTEGER NOT NULL DEFAULT 0,
-                    tuesday INTEGER NOT NULL DEFAULT 0,
-                    wednesday INTEGER NOT NULL DEFAULT 0,
-                    thursday INTEGER NOT NULL DEFAULT 0,
-                    friday INTEGER NOT NULL DEFAULT 0,
-                    saturday INTEGER NOT NULL DEFAULT 0,
-                    sunday INTEGER NOT NULL DEFAULT 0,
-                    start_date VARCHAR(8) NOT NULL,
-                    end_date VARCHAR(8) NOT NULL,
-                    PRIMARY KEY (city_id, service_id)
-                )
-                """);
-        jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS gtfs_calendar_dates (
-                    city_id UUID NOT NULL,
-                    service_id VARCHAR(255) NOT NULL,
-                    service_date VARCHAR(8) NOT NULL,
-                    exception_type INTEGER NOT NULL,
-                    PRIMARY KEY (city_id, service_id, service_date)
-                )
-                """);
         jdbcTemplate.execute("DELETE FROM gtfs_calendar_dates");
         jdbcTemplate.execute("DELETE FROM gtfs_calendar");
     }

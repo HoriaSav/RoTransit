@@ -1,5 +1,7 @@
 package com.rotransit.backend.service;
 
+import com.rotransit.backend.dto.RouteSearchQuery;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;

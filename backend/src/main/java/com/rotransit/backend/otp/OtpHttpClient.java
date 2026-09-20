@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.rotransit.backend.service.RouteSearchQuery;
+import com.rotransit.backend.dto.RouteSearchQuery;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -26,21 +26,27 @@ public class OtpHttpClient implements OtpClient {
     private static final double STRICT_WAIT_RELUCTANCE = 0.85;
 
     private final RestTemplate otpRestTemplate;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
     private final boolean enablePathProbing;
     private final LongAdder totalHttpCalls = new LongAdder();
 
     @Autowired
     public OtpHttpClient(
             RestTemplate otpRestTemplate,
+            ObjectMapper objectMapper,
             @Value("${rotransit.otp.enable-path-probing:false}") boolean enablePathProbing) {
         this.otpRestTemplate = otpRestTemplate;
+        this.objectMapper = objectMapper;
         this.enablePathProbing = enablePathProbing;
     }
 
     // Backward-compatible constructor used by unit tests.
     public OtpHttpClient(RestTemplate otpRestTemplate) {
-        this(otpRestTemplate, false);
+        this(otpRestTemplate, new ObjectMapper(), false);
+    }
+
+    public OtpHttpClient(RestTemplate otpRestTemplate, ObjectMapper objectMapper) {
+        this(otpRestTemplate, objectMapper, false);
     }
 
     @Override
@@ -188,73 +194,6 @@ public class OtpHttpClient implements OtpClient {
         return result;
     }
 
-    @Override
-    public List<JsonNode> searchStops(String otpBaseUrl, String query, int limit) {
-        List<String> basePathCandidates = preferPaths(List.of("/routers/default/index/stops", "/otp/routers/default/index/stops"));
-        List<List<QueryParam>> queryShapes = List.of(
-                List.of(new QueryParam("query", query), new QueryParam("detail", "true")),
-                List.of(new QueryParam("q", query), new QueryParam("detail", "true")),
-                List.of(new QueryParam("detail", "true"))
-        );
-
-        for (List<QueryParam> queryParams : queryShapes) {
-            try {
-                JsonNode body = getJsonWithCandidates(otpBaseUrl, basePathCandidates, queryParams);
-                if (body == null || !body.isArray()) {
-                    continue;
-                }
-                List<JsonNode> result = new java.util.ArrayList<>();
-                for (JsonNode stop : body) {
-                    result.add(stop);
-                }
-                return result;
-            } catch (OtpException ignored) {
-                // Try next known OTP stops query shape.
-            }
-        }
-        return List.of();
-    }
-
-    @Override
-    public List<JsonNode> listBusRoutes(String otpBaseUrl) {
-        return getArrayWithCandidates(
-                otpBaseUrl,
-                preferPaths(List.of("/routers/default/index/routes", "/otp/routers/default/index/routes")),
-                List.of()
-        );
-    }
-
-    @Override
-    public List<JsonNode> listRouteStops(String otpBaseUrl, String routeId, String directionId) {
-        List<QueryParam> queryParams = new java.util.ArrayList<>();
-        if (directionId != null && !directionId.isBlank()) {
-            queryParams.add(new QueryParam("direction", directionId));
-        }
-        return getArrayWithCandidates(
-                otpBaseUrl,
-                preferPaths(List.of(
-                        "/routers/default/index/routes/" + routeId + "/stops",
-                        "/otp/routers/default/index/routes/" + routeId + "/stops"
-                )),
-                queryParams
-        );
-    }
-
-    @Override
-    public List<JsonNode> routeStopTimes(String otpBaseUrl, String routeId, String stopId, String serviceDate) {
-        return getArrayWithCandidates(
-                otpBaseUrl,
-                preferPaths(List.of(
-                        "/routers/default/index/stops/" + stopId + "/stoptimes",
-                        "/otp/routers/default/index/stops/" + stopId + "/stoptimes"
-                )),
-                List.of(
-                        new QueryParam("startDate", serviceDate),
-                        new QueryParam("endDate", serviceDate),
-                        new QueryParam("routeId", routeId)
-                )
-        );
-    }
 
     private List<JsonNode> getArray(String url) {
         JsonNode body = getJson(url);

@@ -29,8 +29,6 @@ class TransitCatalogControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM gtfs_calendar_dates",
             "DELETE FROM gtfs_calendar",
             "DELETE FROM gtfs_stop_times",
@@ -53,8 +51,6 @@ class TransitCatalogControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM gtfs_calendar_dates",
             "DELETE FROM gtfs_calendar",
             "DELETE FROM gtfs_stop_times",
@@ -82,8 +78,6 @@ class TransitCatalogControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM gtfs_calendar_dates",
             "DELETE FROM gtfs_calendar",
             "DELETE FROM gtfs_stop_times",
@@ -110,8 +104,6 @@ class TransitCatalogControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM gtfs_calendar_dates",
             "DELETE FROM gtfs_calendar",
             "DELETE FROM gtfs_stop_times",
@@ -140,8 +132,6 @@ class TransitCatalogControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM gtfs_calendar_dates",
             "DELETE FROM gtfs_calendar",
             "DELETE FROM gtfs_stop_times",
@@ -164,6 +154,10 @@ class TransitCatalogControllerIntegrationTest {
                         .queryParam("anchorMonday", "2026-04-06"))
                 .andExpect(status().isOk())
                 .andExpect(header().exists("Content-Length"))
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("attachment")))
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("rotransit-offline-pack-")))
                 .andReturn();
         assertThat(result.getResponse().getContentAsByteArray().length)
                 .isEqualTo(Long.parseLong(result.getResponse().getHeader("Content-Length")));
@@ -182,8 +176,6 @@ class TransitCatalogControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM gtfs_calendar_dates",
             "DELETE FROM gtfs_calendar",
             "DELETE FROM gtfs_stop_times",

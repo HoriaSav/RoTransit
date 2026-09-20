@@ -1,16 +1,18 @@
 package com.rotransit.backend.otp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import org.mockito.ArgumentMatchers;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.rotransit.backend.service.RouteSearchQuery;
+import com.rotransit.backend.dto.RouteSearchQuery;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
@@ -34,7 +36,7 @@ class OtpHttpClientTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        otpHttpClient = new OtpHttpClient(restTemplate);
+        otpHttpClient = new OtpHttpClient(restTemplate, objectMapper);
     }
 
     @Test
@@ -116,4 +118,62 @@ class OtpHttpClientTest {
                 }
                 """);
     }
+
+    @Test
+    void searchRoutesFallsBackToGraphQlWhenRestPlansEmpty() throws Exception {
+        JsonNode emptyPlan = objectMapper.readTree("{\"plan\":{\"itineraries\":[]}}");
+        JsonNode gqlResponse = objectMapper.readTree("""
+                {
+                  "data": {
+                    "plan": {
+                      "itineraries": [
+                        {"duration": 900, "walkDistance": 120, "legs": [{"mode": "BUS"}]}
+                      ]
+                    }
+                  }
+                }
+                """);
+        when(restTemplate.getForEntity(anyString(), eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(emptyPlan, HttpStatus.OK));
+        when(restTemplate.postForEntity(anyString(), any(), eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(gqlResponse, HttpStatus.OK));
+
+        JsonNode result = otpHttpClient.searchRoutes("http://localhost:8080/otp", sampleQuery());
+
+        assertEquals(1, result.path("plan").path("itineraries").size());
+        verify(restTemplate, org.mockito.Mockito.atLeastOnce()).postForEntity(anyString(), any(), eq(JsonNode.class));
+    }
+
+    @Test
+    void removedCatalogMethodsAreAbsentFromPublicApi() {
+        var methods = java.util.Arrays.stream(OtpHttpClient.class.getMethods())
+                .map(java.lang.reflect.Method::getName)
+                .collect(java.util.stream.Collectors.toSet());
+        assertFalse(methods.contains("listRoutes"));
+        assertFalse(methods.contains("getRoute"));
+        assertFalse(methods.contains("listStops"));
+        assertFalse(methods.contains("getStops"));
+        assertFalse(methods.contains("getAgencies"));
+        assertFalse(methods.contains("listAgencies"));
+        assertTrue(methods.contains("searchRoutes"));
+        assertTrue(methods.contains("searchRoutesWithWindow"));
+        assertTrue(methods.contains("findNearbyStops"));
+        assertTrue(methods.contains("totalHttpCalls"));
+    }
+
+    @Test
+    void constructorUsesInjectedObjectMapperNotInternalDefaultOnly() throws Exception {
+        ObjectMapper custom = new ObjectMapper();
+        OtpHttpClient client = new OtpHttpClient(restTemplate, custom);
+        JsonNode emptyPlan = objectMapper.readTree("{\"plan\":{\"itineraries\":[]}}");
+        when(restTemplate.getForEntity(anyString(), eq(JsonNode.class)))
+                .thenReturn(new ResponseEntity<>(emptyPlan, HttpStatus.OK));
+        when(restTemplate.postForEntity(anyString(), any(), eq(JsonNode.class)))
+                .thenThrow(new RestClientException("no gql"));
+
+        JsonNode result = client.searchRoutes("http://localhost:8080/otp", sampleQuery());
+        assertTrue(result.path("plan").path("itineraries").isArray());
+        assertEquals(0, result.path("plan").path("itineraries").size());
+    }
+
 }
