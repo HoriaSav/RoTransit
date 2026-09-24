@@ -65,20 +65,19 @@ class _MapCompanionTabState extends ConsumerState<MapCompanionTab> {
     final scheme = Theme.of(context).colorScheme;
     final topPad = MediaQuery.paddingOf(context).top + 8;
 
-    return IgnorePointer(
-      // Let map taps pass through; re-enable only on chrome below.
-      ignoring: true,
-      child: Stack(
-        children: [
-          Positioned(
-            left: 12,
-            right: 12,
-            top: topPad,
-            child: IgnorePointer(
-              ignoring: false,
-              child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
+    // Stack with only Positioned chrome: empty areas defer hits to the map
+    // underneath. Do NOT wrap in IgnorePointer(ignoring: true) — a parent
+    // IgnorePointer blocks the entire subtree; child ignoring:false cannot
+    // re-enable the Settings gear / search field.
+    return Stack(
+      children: [
+        Positioned(
+          left: 12,
+          right: 12,
+          top: topPad,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
                 Row(
                   children: [
                     Expanded(
@@ -183,12 +182,10 @@ class _MapCompanionTabState extends ConsumerState<MapCompanionTab> {
                     ),
                   ),
                 ),
-              ],
-            ),
-            ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

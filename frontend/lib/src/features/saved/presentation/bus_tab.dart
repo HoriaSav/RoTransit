@@ -126,7 +126,6 @@ class _BusLinesViewState extends ConsumerState<_BusLinesView> {
     super.dispose();
   }
 
-
   bool _isTeLine(BusLine line) {
     final short = line.shortName.trim().toUpperCase();
     final routeId = line.routeId.trim().toUpperCase();
@@ -176,14 +175,12 @@ class _BusLinesViewState extends ConsumerState<_BusLinesView> {
   List<BusLine> _applySearch(List<BusLine> lines) {
     final q = _query.trim().toLowerCase();
     if (q.isEmpty) return lines;
-    return lines
-        .where((line) {
-          final short = line.shortName.toLowerCase();
-          final long = line.longName.toLowerCase();
-          final id = line.routeId.toLowerCase();
-          return short.contains(q) || long.contains(q) || id.contains(q);
-        })
-        .toList();
+    return lines.where((line) {
+      final short = line.shortName.toLowerCase();
+      final long = line.longName.toLowerCase();
+      final id = line.routeId.toLowerCase();
+      return short.contains(q) || long.contains(q) || id.contains(q);
+    }).toList();
   }
 
   @override
@@ -196,7 +193,16 @@ class _BusLinesViewState extends ConsumerState<_BusLinesView> {
 
     return packInstalled.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, __) => Center(child: Text(l10n.busTabTimetablesNotDownloadedBody)),
+      // Pack open/meta failure — surface clearly (not a silent empty list).
+      error: (err, _) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            '${l10n.busCouldNotLoadLines}\n$err',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
       data: (installed) {
         if (!installed) {
           return _TimetablesNotDownloadedBody(
@@ -307,9 +313,8 @@ class _BusCategoryTabBar extends StatelessWidget {
           dividerHeight: 0,
           splashFactory: NoSplash.splashFactory,
           overlayColor: const WidgetStatePropertyAll(Colors.transparent),
-          labelColor: isDark
-              ? selectedShellAccentColor(context)
-              : scheme.primary,
+          labelColor:
+              isDark ? selectedShellAccentColor(context) : scheme.primary,
           unselectedLabelColor: scheme.onSurfaceVariant,
           labelStyle: const TextStyle(
             fontSize: 13.5,
@@ -432,7 +437,8 @@ class _BusLineTile extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final extra = context.extraColors;
     final isDark = scheme.brightness == Brightness.dark;
-    final badgeLabel = line.shortName.trim().isEmpty ? '—' : line.shortName.trim();
+    final badgeLabel =
+        line.shortName.trim().isEmpty ? '—' : line.shortName.trim();
     final badge = accentBadgeColors(context);
 
     return Material(
@@ -505,4 +511,3 @@ class _BusLineTile extends StatelessWidget {
     );
   }
 }
-

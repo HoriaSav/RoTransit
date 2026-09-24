@@ -72,7 +72,12 @@ class CompanionCatalog {
   Future<Database> _ensureDb() {
     final existing = _db;
     if (existing != null) return Future.value(existing);
-    return _openFuture ??= _openDb();
+    // If a prior open failed, clear so callers can retry (bootstrap catch must
+    // not permanently poison Timetable / Bus providers).
+    return _openFuture ??= _openDb().catchError((Object e, StackTrace st) {
+      _openFuture = null;
+      Error.throwWithStackTrace(e, st);
+    });
   }
 
   Future<Database> _openDb() async {

@@ -86,12 +86,14 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
       keepAlive: true,
       onPositionChanged: _onShellMapPositionChanged,
       onTap: _onShellMapTap,
-      // Race pinch-zoom vs rotate so a normal pinch does not twist the map;
-      // intentional two-finger rotate still wins when twist exceeds threshold.
+      // flutter_map race checks pinchZoom BEFORE rotate. Low pinchZoomThreshold
+      // (~0.35) lets tiny scale noise win the race before rotation can hit 28°,
+      // so rotate feels late. Raise pinch zoom bar (~1.0) and lower rotate bar
+      // (~14°) so intentional twist wins more readily without every pinch spinning.
       interactionOptions: const InteractionOptions(
         enableMultiFingerGestureRace: true,
-        rotationThreshold: 28,
-        pinchZoomThreshold: 0.35,
+        rotationThreshold: 14,
+        pinchZoomThreshold: 1.0,
         rotationWinGestures: MultiFingerGesture.rotate,
         pinchZoomWinGestures:
             MultiFingerGesture.pinchZoom | MultiFingerGesture.pinchMove,
