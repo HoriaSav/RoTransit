@@ -57,6 +57,10 @@ class AppLocalizationsRo extends AppLocalizations {
   String get offlineTimetables => 'Orare offline';
 
   @override
+  String get offlinePackWhatItCovers =>
+      'Păstrează liniile și orarele pe telefon. Căutarea unei rute de la A la B tot are nevoie de internet.';
+
+  @override
   String offlineOnDevicePack(String version) {
     return 'Pachet pe dispozitiv: $version';
   }
@@ -98,10 +102,6 @@ class AppLocalizationsRo extends AppLocalizations {
   }
 
   @override
-  String get offlinePackNotAvailablePreview =>
-      'Indisponibil în modul previzualizare';
-
-  @override
   String get offlinePackChooseCityFirst => 'Alege mai întâi un oraș';
 
   @override
@@ -132,7 +132,7 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String timetableDownloadConfirmMessage(String cityName) {
-    return 'Descarci orarele offline de autobuz pentru $cityName? Poate consuma date mobile.';
+    return 'Descarci liniile și orarele de autobuz pentru $cityName pe telefon? Căutarea unei rute de la A la B tot are nevoie de internet. Poate consuma date mobile.';
   }
 
   @override
@@ -262,9 +262,6 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get cityUnavailable => 'Indisponibil';
-
-  @override
-  String get previewMode => 'Mod previzualizare';
 
   @override
   String get pressBackAgainToExit =>

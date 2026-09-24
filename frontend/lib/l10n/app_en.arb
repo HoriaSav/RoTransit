@@ -3,8 +3,8 @@
 
   "appTitle": "RoTransit",
 
-  "navSearch": "Search",
-  "navBus": "Bus",
+  "navSearch": "Map",
+  "navBus": "Timetable",
   "navFavorites": "Favorites",
   "navSettings": "Settings",
 
@@ -20,6 +20,7 @@
   "languageGerman": "German",
 
   "offlineTimetables": "Offline timetables",
+  "offlinePackWhatItCovers": "Stores bus lines and stop timetables on the phone. Searching a trip from A to B still needs internet.",
   "offlineOnDevicePack": "On-device pack: {version}",
   "@offlineOnDevicePack": {
     "placeholders": { "version": { "type": "String" } }
@@ -53,7 +54,6 @@
       "seconds": { "type": "int" }
     }
   },
-  "offlinePackNotAvailablePreview": "Not available in preview mode",
   "offlinePackChooseCityFirst": "Choose a city first",
   "offlinePackNoneYet": "Not downloaded",
   "offlinePackAvailableOnDevice": "Available on device",
@@ -71,7 +71,7 @@
   "offlineMetaEndpointMissing": "Not available — deploy GET /api/buses/offline-pack-meta on the server",
   "timetableDownloadSourceBus": "Bus timetables",
   "timetableDownloadConfirmTitle": "Download timetables?",
-  "timetableDownloadConfirmMessage": "Download offline bus timetables for {cityName}? This may use mobile data.",
+  "timetableDownloadConfirmMessage": "Download bus lines and stop timetables for {cityName} onto this phone? Searching a trip from A to B still needs internet. This may use mobile data.",
   "@timetableDownloadConfirmMessage": {
     "placeholders": { "cityName": { "type": "String" } }
   },
@@ -139,7 +139,6 @@
     "placeholders": { "name": { "type": "String" } }
   },
   "cityUnavailable": "Unavailable",
-  "previewMode": "Preview mode",
 
   "pressBackAgainToExit": "Press back again quickly to exit the app",
 

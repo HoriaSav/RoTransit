@@ -7,6 +7,7 @@ import '../../../core/format/search_text_normalizer.dart';
 import '../../../local/local_db.dart';
 import '../domain/route_models.dart';
 import 'stop_suggestion_dedupe.dart';
+import '../../map/data/companion_catalog.dart';
 
 final offlineTransitCacheRepositoryProvider =
     Provider<OfflineTransitCacheRepository>(
@@ -69,6 +70,19 @@ class OfflineTransitCacheRepository {
     if (cityId.isEmpty) return const [];
     final cached = _uniqueStopsByCity[cityId];
     if (cached != null) return cached;
+
+    // Bundled Brașov companion pack is authoritative for map/search.
+    try {
+      final companion = CompanionCatalog.instance;
+      final meta = await companion.meta();
+      if (cityId == meta.cityId || cityId.isEmpty) {
+        final stops = await companion.allStops();
+        if (stops.isNotEmpty) {
+          _uniqueStopsByCity[cityId] = stops;
+          return stops;
+        }
+      }
+    } catch (_) {}
 
     final meta = await getMetaForCity(cityId);
     if (meta == null) {
@@ -335,6 +349,13 @@ class OfflineTransitCacheRepository {
 
   Future<List<BusLine>?> getBuses(String cityId) async {
     if (cityId.isEmpty) return null;
+    try {
+      final companion = CompanionCatalog.instance;
+      final meta = await companion.meta();
+      if (cityId == meta.cityId) {
+        return companion.listBuses();
+      }
+    } catch (_) {}
     final db = await LocalDb.instance();
     final rows = await db.query(
       'offline_bus_lines',
@@ -359,6 +380,17 @@ class OfflineTransitCacheRepository {
     String? directionId,
   }) async {
     if (cityId.isEmpty) return null;
+    try {
+      final companion = CompanionCatalog.instance;
+      final meta = await companion.meta();
+      if (cityId == meta.cityId) {
+        final stops = await companion.routeStops(
+          routeId: routeId,
+          directionId: directionId ?? '0',
+        );
+        if (stops.isNotEmpty) return stops;
+      }
+    } catch (_) {}
     final dir = directionId ?? '';
     final db = await LocalDb.instance();
     final rows = await db.query(
@@ -387,6 +419,18 @@ class OfflineTransitCacheRepository {
     String? directionId,
   }) async {
     if (cityId.isEmpty) return null;
+    try {
+      final companion = CompanionCatalog.instance;
+      final meta = await companion.meta();
+      if (cityId == meta.cityId) {
+        return companion.timetable(
+          routeId: routeId,
+          stopId: stopId,
+          serviceDate: serviceDate,
+          directionId: directionId ?? '0',
+        );
+      }
+    } catch (_) {}
     final dir = directionId ?? '';
     final dayKind = dayKindForServiceDate(serviceDate);
     final db = await LocalDb.instance();

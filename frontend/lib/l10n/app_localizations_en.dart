@@ -57,6 +57,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get offlineTimetables => 'Offline timetables';
 
   @override
+  String get offlinePackWhatItCovers =>
+      'Stores bus lines and stop timetables on the phone. Searching a trip from A to B still needs internet.';
+
+  @override
   String offlineOnDevicePack(String version) {
     return 'On-device pack: $version';
   }
@@ -98,9 +102,6 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get offlinePackNotAvailablePreview => 'Not available in preview mode';
-
-  @override
   String get offlinePackChooseCityFirst => 'Choose a city first';
 
   @override
@@ -131,7 +132,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String timetableDownloadConfirmMessage(String cityName) {
-    return 'Download offline bus timetables for $cityName? This may use mobile data.';
+    return 'Download bus lines and stop timetables for $cityName onto this phone? Searching a trip from A to B still needs internet. This may use mobile data.';
   }
 
   @override
@@ -261,9 +262,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get cityUnavailable => 'Unavailable';
-
-  @override
-  String get previewMode => 'Preview mode';
 
   @override
   String get pressBackAgainToExit => 'Press back again quickly to exit the app';

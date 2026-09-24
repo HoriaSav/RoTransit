@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:rotransit_frontend/l10n/app_localizations.dart';
+import 'package:rotransit/l10n/app_localizations.dart';
 
 import '../map/presentation/map_tab.dart';
 import '../saved/presentation/bus_tab.dart';
 import '../saved/presentation/favorites_tab.dart';
-import '../search/presentation/search_tab.dart';
+import '../map/presentation/map_companion_tab.dart';
 import '../settings/presentation/settings_tab.dart';
 import 'shell_floating_nav.dart';
 import 'shell_header.dart';
@@ -44,7 +44,7 @@ class _MainShellState extends ConsumerState<MainShell> {
     }
 
     _lastBackPressForExit = now;
-    final message = AppLocalizations.of(context)!.pressBackAgainToExit;
+    final message = AppLocalizations.of(context).pressBackAgainToExit;
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();
     showAppSnackBar(
@@ -71,7 +71,7 @@ class _MainShellState extends ConsumerState<MainShell> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (selectedTab != busTabIndex) const ShellBrandingHeader(),
+          if (selectedTab != busTabIndex && selectedTab != 0) const ShellBrandingHeader(),
           const Expanded(
             child: Stack(
               clipBehavior: Clip.hardEdge,
@@ -118,30 +118,7 @@ class _SearchGradientOverlay extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final index = ref.watch(selectedTabProvider);
-    final mapOverlayVisible = ref.watch(mapShellOverlayVisibleProvider);
-    if (index != 0 || mapOverlayVisible) {
-      return const SizedBox.shrink();
-    }
-    final extra = context.extraColors;
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                extra.searchGradientTop,
-                extra.searchGradientMid,
-                extra.searchGradientBottom,
-              ],
-              stops: const [0.0, 0.38, 1.0],
-            ),
-          ),
-        ),
-      ),
-    );
+    return const SizedBox.shrink();
   }
 }
 
@@ -153,11 +130,12 @@ class _ShellTabPages extends ConsumerWidget {
     final index = ref.watch(selectedTabProvider);
     final mapOverlayVisible = ref.watch(mapShellOverlayVisibleProvider);
     final pages = [
+      // Map companion chrome (search stations). Map stays interactive underneath.
       IgnorePointer(
-        ignoring: mapOverlayVisible,
+        ignoring: false,
         child: Opacity(
-          opacity: mapOverlayVisible ? 0 : 1,
-          child: const SearchTab(),
+          opacity: 1,
+          child: const MapCompanionTab(),
         ),
       ),
       const BusTab(),

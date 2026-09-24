@@ -9,7 +9,7 @@ import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:latlong2/latlong.dart' hide Path;
-import 'package:rotransit_frontend/l10n/app_localizations.dart';
+import 'package:rotransit/l10n/app_localizations.dart';
 
 import '../../../core/format/distance_format.dart';
 import '../../../core/errors/app_user_message.dart';
@@ -21,328 +21,16 @@ import '../../../core/location/user_location_provider.dart';
 import '../../routes/data/route_api_repository.dart';
 import '../../routes/domain/route_models.dart';
 import '../../routes/state/save_route_controller.dart';
+import '../../search/domain/search_query.dart';
 import '../../shell/shell_layout.dart';
 import '../../shell/state/navigation_provider.dart';
+import '../data/companion_catalog.dart';
+import 'map_companion_tab.dart';
+import 'stop_board_sheet.dart';
 
-/// Graph stop dots (50% of former 20px bus marker).
-const double _kGraphStopDotSize = 10;
-
-/// Origin (“from”) marker — previous graph marker size.
-const double _kOriginDotSize = 20;
-
-/// User GPS dot (50% of former 36px).
-const double _kUserLocationDotSize = 18;
-
-/// Landmark: square marker + [Alignment.center] like graph stop dots (avoids bottomCenter/rotate drift when zooming).
-const double _kLandmarkMarkerSize = 32;
-const double _kLandmarkIconSize = 28;
-
-/// Non-highlighted legs: full [_legColor] saturation.
-const double _kMapRouteStrokeOpacityLeg = 1.0;
-/// Highlighted leg: slightly toned down so focus isn’t harsher than the rest.
-const double _kMapRouteStrokeOpacityHighlight = 0.85;
-
-const Map<String, Color> _kLineColorOverrides = {};
-
-const List<Color> _kTransitFallbackPalette = [
-  Color(0xFF2563EB),
-  Color(0xFF7C3AED),
-  Color(0xFF0F766E),
-  Color(0xFFDC2626),
-  Color(0xFFD97706),
-  Color(0xFF0EA5E9),
-  Color(0xFF4F46E5),
-  Color(0xFF047857),
-  Color(0xFFBE123C),
-  Color(0xFF9333EA),
-];
-
-String _normalizeMode(String mode) => mode.trim().toUpperCase();
-
-bool _isTransitLeg(RouteLeg leg) {
-  final mode = _normalizeMode(leg.mode);
-  return mode != 'WALK' && mode != 'BICYCLE' && mode != 'CAR';
-}
-
-String _legLabel(String mode, AppLocalizations l10n) {
-  return l10n.transitModeLabel(mode);
-}
-
-String _lineIdFromRouteId(String routeId) {
-  final raw = routeId.trim();
-  if (raw.isEmpty) return '';
-  final withoutFeed = raw.contains(':') ? raw.split(':').last : raw;
-  return withoutFeed.trim();
-}
-
-Color _stableColorForKey(String key) {
-  if (key.isEmpty) return const Color(0xFF64748B);
-  final idx = key.hashCode.abs() % _kTransitFallbackPalette.length;
-  return _kTransitFallbackPalette[idx];
-}
-
-Color _legColor(RouteLeg leg) {
-  if (!_isTransitLeg(leg)) {
-    return const Color(0xFF64748B);
-  }
-  final lineId = _lineIdFromRouteId(leg.routeId);
-  if (_kLineColorOverrides.containsKey(lineId)) {
-    return _kLineColorOverrides[lineId]!;
-  }
-  final normalizedMode = _normalizeMode(leg.mode);
-  if (lineId.isNotEmpty) {
-    return _stableColorForKey('$normalizedMode:$lineId');
-  }
-  return _stableColorForKey(normalizedMode);
-}
-
-/// Softer accent for itinerary pills and timeline dots; map polylines stay [_legColor].
-Color _itineraryAccentColor(Color base) {
-  const neutral = Color(0xFF94A3B8);
-  return Color.lerp(base, neutral, 0.32)!;
-}
-
-/// Text/icon on top of a solid [routeColor] pill (same RGB as map polylines).
-Color _onRouteColorInk(Color routeColor) {
-  return routeColor.computeLuminance() > 0.62
-      ? const Color(0xFF0F172A)
-      : Colors.white;
-}
-
-/// Shared geometry and typography for itinerary line pills.
-const double _kPillRadius = 6;
-const EdgeInsets _kPillPadding =
-    EdgeInsets.symmetric(horizontal: 7, vertical: 3);
-const double _kPillLineFontSize = 13;
-
-String _legBadgeLabel(RouteLeg leg, AppLocalizations l10n) {
-  final mode = _legLabel(leg.mode, l10n);
-  final lineId = _lineIdFromRouteId(leg.routeId);
-  if (!_isTransitLeg(leg) || lineId.isEmpty) {
-    return mode;
-  }
-  return '$mode $lineId';
-}
-
-List<RouteLeg> _transitLegs(RouteOption option) {
-  return option.legs.where(_isTransitLeg).toList();
-}
-
-class _TransitSummaryItem {
-  const _TransitSummaryItem({
-    required this.modeLabel,
-    required this.lineId,
-    required this.modeRaw,
-    required this.routeColor,
-  });
-
-  final String modeLabel;
-  final String lineId;
-  /// Raw OTP mode for pill tint (trolleybus vs bus, etc.).
-  final String modeRaw;
-  /// Same color as the map polyline for this line ([_legColor]).
-  final Color routeColor;
-}
-
-/// Mode icon for itinerary rows and timeline (trolleybus uses bolt, not walk).
-Widget _modeIconForMode(String mode, {double size = 18}) {
-  final normalized = mode.toUpperCase();
-  final IconData icon = switch (normalized) {
-    'WALK' => Icons.directions_walk,
-    'BICYCLE' => Icons.directions_bike,
-    'BIKE' => Icons.directions_bike,
-    'CAR' => Icons.directions_car,
-    'BUS' => Icons.directions_bus,
-    'TROLLEYBUS' => Icons.electric_bolt,
-    'TRAM' => Icons.tram,
-    'RAIL' => Icons.train,
-    'SUBWAY' => Icons.subway,
-    _ => Icons.directions_transit,
-  };
-  return Icon(icon, size: size);
-}
-
-List<_TransitSummaryItem> _buildTransitSummary(
-  List<RouteLeg> transitLegs,
-  AppLocalizations l10n,
-) {
-  if (transitLegs.isEmpty) return const [];
-  final items = <_TransitSummaryItem>[];
-  for (final leg in transitLegs) {
-    final modeLabel = _legLabel(leg.mode, l10n);
-    final lineId = _lineIdFromRouteId(leg.routeId);
-    if (items.isNotEmpty &&
-        items.last.modeLabel == modeLabel &&
-        items.last.lineId == lineId) {
-      continue;
-    }
-    items.add(
-      _TransitSummaryItem(
-        modeLabel: modeLabel,
-        lineId: lineId,
-        modeRaw: leg.mode,
-        routeColor: _legColor(leg),
-      ),
-    );
-  }
-  return items;
-}
-
-/// Drag handle height (Google-maps-style sheet resize).
-const double _kRouteSheetDragHandleHeight = 28;
-
-/// Min fraction of the route sheet slot height (peek: handle + back row).
-const double _kRouteSheetMinExtent = 0.13;
-
-/// Middle snap position (half of available slot height).
-const double _kRouteSheetSnapMidExtent = 0.5;
-
-/// Details: hide scrollable body below this height (peek mode).
-const double _kDetailsSheetBodyMinHeight = 172;
-
-/// Top drag area for resizing the route sheet over the map.
-class _RouteSheetDragHandle extends StatelessWidget {
-  const _RouteSheetDragHandle({
-    required this.onDragDelta,
-    this.onDragEnd,
-    this.allowDrag = true,
-  });
-
-  final ValueChanged<double> onDragDelta;
-  final VoidCallback? onDragEnd;
-  final bool allowDrag;
-
-  @override
-  Widget build(BuildContext context) {
-    final line = Theme.of(context).colorScheme.outlineVariant;
-    final child = SizedBox(
-      height: _kRouteSheetDragHandleHeight,
-      width: double.infinity,
-      child: Center(
-        child: Container(
-          width: 40,
-          height: 4,
-          decoration: BoxDecoration(
-            color: line.withValues(
-              alpha: allowDrag ? 0.85 : 0.45,
-            ),
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-      ),
-    );
-    if (!allowDrag) return child;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onVerticalDragUpdate: (d) => onDragDelta(d.delta.dy),
-      onVerticalDragEnd: (_) => onDragEnd?.call(),
-      child: child,
-    );
-  }
-}
-
-/// Map route sheet: compact icon-only back (avoids [IconButton] default 48dp min height).
-Widget _mapSheetBackIconButton({
-  required BuildContext context,
-  required VoidCallback onPressed,
-}) {
-  final l10n = AppLocalizations.of(context)!;
-  return Tooltip(
-    message: l10n.commonBack,
-    child: Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onPressed,
-        customBorder: const CircleBorder(),
-        child: Padding(
-          padding: const EdgeInsets.all(4),
-          child: Icon(
-            Icons.arrow_back,
-            size: 22,
-            color: Theme.of(context).colorScheme.primary,
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
-/// Transit line chips with arrows — same pattern as route list and trip details summary.
-class _TransitSummaryChipsRow extends StatelessWidget {
-  const _TransitSummaryChipsRow({required this.option});
-
-  final RouteOption option;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final transitSummary = _buildTransitSummary(_transitLegs(option), l10n);
-    if (transitSummary.isEmpty) {
-      return Text(
-        l10n.mapWalkingRoute,
-        style: TextStyle(
-          fontSize: 14.5,
-          fontWeight: FontWeight.w600,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
-      );
-    }
-    return Wrap(
-      spacing: 8,
-      runSpacing: _kRouteStepRunSpacing,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        for (var i = 0; i < transitSummary.length; i++) ...[
-          _TransitStepChip(item: transitSummary[i]),
-          if (i < transitSummary.length - 1)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 2),
-              child: Text(
-                '→',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w700,
-                  height: 1,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-            ),
-        ],
-      ],
-    );
-  }
-}
-
-/// Spacing for itinerary cards in [_RouteListPanel].
-const double _kRouteStepRunSpacing = 6;
-
-/// Soft elevation for step cards in [_RouteDetailsPanel].
-List<BoxShadow> _itineraryStepCardShadow(ColorScheme scheme) => [
-      BoxShadow(
-        color: scheme.shadow.withValues(alpha: 0.14),
-        blurRadius: 10,
-        offset: const Offset(0, 3),
-      ),
-      BoxShadow(
-        color: scheme.shadow.withValues(alpha: 0.06),
-        blurRadius: 2,
-        offset: const Offset(0, 1),
-      ),
-    ];
-const double _kMetaIconTextGap = 6;
-const double _kMetaBulletGap = 8;
-const double _kDurationPriceGap = 10;
-
-double _lerpAngleRad(double a, double b, double t) {
-  var delta = b - a;
-  while (delta > math.pi) {
-    delta -= 2 * math.pi;
-  }
-  while (delta < -math.pi) {
-    delta += 2 * math.pi;
-  }
-  return a + delta * t;
-}
+part 'map_route_style.dart';
+part 'map_controls.dart';
+part 'map_route_sheet.dart';
 
 class MapTab extends ConsumerStatefulWidget {
   const MapTab({super.key});
@@ -383,6 +71,9 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
   /// Single instance so [FlutterMap.didUpdateWidget] does not treat options as
   /// changed on every parent rebuild (new closures break [MapOptions] equality).
   late final MapOptions _shellMapOptions;
+  List<StopSearchItem> _companionStops = const [];
+  double _mapZoom = _fallbackZoom;
+  static const _companionPinsMinZoom = 13.0;
 
   @override
   void initState() {
@@ -400,7 +91,16 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
       if (!mounted) return;
       _initUserLocation();
       _resyncItineraryCompassFromProviders();
+      unawaited(_loadCompanionStops());
     });
+  }
+
+  Future<void> _loadCompanionStops() async {
+    try {
+      final stops = await CompanionCatalog.instance.allStops();
+      if (!mounted) return;
+      setState(() => _companionStops = stops);
+    } catch (_) {}
   }
 
   @override
@@ -433,19 +133,35 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
         .read(userLocationProvider.notifier)
         .resolve(forceFresh: forceFresh);
     if (!mounted || !loc.hasFix) return;
+    if (!isUsableLatLon(loc.lat!, loc.lon!)) return;
     final point = LatLng(loc.lat!, loc.lon!);
     setState(() => _userLocation = point);
     // Keep default city framing on Search; move to user only on explicit action.
     if (!_initialUserFocusApplied) _initialUserFocusApplied = true;
   }
 
-  void _centerOnUser() {
+  Future<void> _centerOnUser() async {
+    if (_userLocation == null) {
+      await _initUserLocation();
+    }
+    if (!mounted) return;
     final point = _userLocation;
-    if (point == null) {
-      unawaited(_initUserLocation(forceFresh: true));
+    if (point == null || !isUsableLatLon(point.latitude, point.longitude)) {
+      final l10n = AppLocalizations.of(context);
+      final failure = await localizedUserLocationFailure(l10n);
+      if (!mounted) return;
+      showUserMessage(
+        context,
+        AppUserMessage.custom(
+          failure.message,
+          severity: UserMessageSeverity.warning,
+          actionLabel: failure.showSettingsAction ? l10n.openSettings : null,
+        ),
+        onAction: failure.showSettingsAction ? openUserLocationSettings : null,
+      );
       return;
     }
-    _animateCameraTo(center: point, zoom: _userZoom);
+    await _animateCameraTo(center: point, zoom: _userZoom);
   }
 
   void _resetNorth() {
@@ -692,6 +408,9 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
     final targetCenter = center ?? startCenter;
     final targetZoom = zoom ?? startZoom;
     final targetRotation = rotation ?? startRotation;
+    if (!isUsableLatLon(targetCenter.latitude, targetCenter.longitude)) {
+      return;
+    }
 
     final noChange = targetCenter == startCenter &&
         (targetZoom - startZoom).abs() < 0.001 &&
@@ -731,12 +450,18 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
 
   void _onShellMapPositionChanged(MapCamera camera, bool hasGesture) {
     _syncMapRotation(camera.rotation);
+    final z = camera.zoom;
+    if ((z - _mapZoom).abs() >= 0.15) {
+      setState(() => _mapZoom = z);
+    } else {
+      _mapZoom = z;
+    }
   }
 
   void _onShellMapTap(TapPosition tapPosition, LatLng latLng) {
+    if (!isUsableLatLon(latLng.latitude, latLng.longitude)) return;
     final selectionTarget = ref.read(mapSelectionTargetProvider);
-    final point =
-        '${latLng.latitude.toStringAsFixed(5)},${latLng.longitude.toStringAsFixed(5)}';
+    final point = latLonPoint(latLng.latitude, latLng.longitude);
     if (selectionTarget != null) {
       ref.read(mapPickedLocationProvider.notifier).state =
           MapPickedLocation(target: selectionTarget, value: point);
@@ -751,7 +476,45 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
       );
       return;
     }
-    showUserMessage(context, AppUserMessages.mapCoordinateTap(point));
+
+    // Companion: tap near a stop opens the schedule board.
+    final routeOverlaySuppressed = ref.read(routeMapOverlaySuppressedProvider);
+    final showSheet = ref.read(showMapSheetProvider);
+    if (!showSheet || routeOverlaySuppressed) {
+      final nearest = _nearestCompanionStop(latLng, maxMeters: 70);
+      if (nearest != null) {
+        unawaited(showStopBoardSheet(context, stop: nearest));
+        return;
+      }
+    }
+  }
+
+  StopSearchItem? _nearestCompanionStop(LatLng latLng, {required double maxMeters}) {
+    if (_companionStops.isEmpty) return null;
+    const dist = Distance();
+    StopSearchItem? best;
+    var bestM = maxMeters;
+    for (final s in _companionStops) {
+      final m = dist.as(
+        LengthUnit.Meter,
+        latLng,
+        LatLng(s.lat, s.lon),
+      );
+      if (m <= bestM) {
+        bestM = m;
+        best = s;
+      }
+    }
+    return best;
+  }
+
+  Future<void> _openCompanionStop(StopSearchItem stop) async {
+    await _animateCameraTo(
+      center: LatLng(stop.lat, stop.lon),
+      zoom: math.max(_mapZoom, 15.5),
+    );
+    if (!mounted) return;
+    await showStopBoardSheet(context, stop: stop);
   }
 
   void _syncMapRotation(double rotation) {
@@ -882,7 +645,18 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
+    ref.listen<UserLocationState>(userLocationProvider, (previous, next) {
+      if (!next.hasFix || next.lat == null || next.lon == null) return;
+      if (!isUsableLatLon(next.lat!, next.lon!)) return;
+      final point = LatLng(next.lat!, next.lon!);
+      if (_userLocation?.latitude == point.latitude &&
+          _userLocation?.longitude == point.longitude) {
+        return;
+      }
+      setState(() => _userLocation = point);
+    });
+
     ref.listen<bool>(showMapSheetProvider, (previous, next) {
       if (previous != true || next != false) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -921,6 +695,15 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
     ref.listen<bool>(routeMapOverlaySuppressedProvider, (_, __) {
       WidgetsBinding.instance
           .addPostFrameCallback((_) => _resyncItineraryCompassFromProviders());
+    });
+
+    ref.listen<StopSearchItem?>(companionFocusStopProvider, (prev, next) {
+      if (next == null || identical(prev, next)) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_openCompanionStop(next));
+        ref.read(companionFocusStopProvider.notifier).state = null;
+      });
     });
 
     final state = ref.watch(searchMapStateProvider);
@@ -1060,7 +843,7 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
               TileLayer(
                 key: const ValueKey<Object>('rotransit_osm_tiles'),
                 urlTemplate: _tileUrl,
-                userAgentPackageName: 'com.example.rotransit_frontend',
+                userAgentPackageName: 'com.rotransit.app',
                 tileProvider: _fmtcTileProvider ?? _networkTileProvider,
               ),
               if (detailMapPolylines.isNotEmpty)
@@ -1152,7 +935,44 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
                     ),
                   ],
                 ),
-              if (_userLocation != null)
+              if (!effectiveDetails &&
+                  _mapZoom >= _companionPinsMinZoom &&
+                  _companionStops.isNotEmpty)
+                MarkerLayer(
+                  markers: [
+                    for (final stop in _companionStops)
+                      Marker(
+                        point: LatLng(stop.lat, stop.lon),
+                        width: 18,
+                        height: 18,
+                        alignment: Alignment.center,
+                        child: GestureDetector(
+                          onTap: () => unawaited(
+                            showStopBoardSheet(context, stop: stop),
+                          ),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: const Color(0xFF0A3E96),
+                              border: Border.all(color: Colors.white, width: 2),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x33000000),
+                                  blurRadius: 2,
+                                  offset: Offset(0, 1),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              if (_userLocation != null &&
+                  isUsableLatLon(
+                    _userLocation!.latitude,
+                    _userLocation!.longitude,
+                  ))
                 MarkerLayer(
                   markers: [
                     Marker(
@@ -1183,7 +1003,12 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
             builder: (context, ref, _) {
               final sheet = ref.watch(showMapSheetProvider);
               final tab = ref.watch(selectedTabProvider);
-              if (sheet || tab == 0) return const SizedBox.shrink();
+              // Hide only when a route sheet covers the map.
+              if (sheet) return const SizedBox.shrink();
+              if (tab != 0 && tab != 1) {
+                // still show on map-ish tabs; hide on favorites/settings dense UIs
+              }
+              if (tab == 2 || tab == 3) return const SizedBox.shrink();
               return Positioned(
                 right: 14,
                 bottom: fabStackBottom,
@@ -1309,724 +1134,3 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
   }
 }
 
-class _MapControlButton extends StatelessWidget {
-  const _MapControlButton({
-    this.icon,
-    this.child,
-    this.tooltip,
-    required this.onPressed,
-  }) : assert(icon != null || child != null);
-
-  final IconData? icon;
-  final Widget? child;
-  final String? tooltip;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final extra = context.extraColors;
-    return Material(
-      color: extra.mapFabBackground,
-      shape: const CircleBorder(),
-      elevation: 4,
-      shadowColor: Theme.of(context).colorScheme.shadow,
-      child: IconButton(
-        tooltip: tooltip,
-        onPressed: onPressed,
-        icon: child ??
-            Icon(icon, color: Theme.of(context).colorScheme.onPrimary),
-      ),
-    );
-  }
-}
-
-/// Compass FAB: asset shows red arrow + “N” for geographic north; rotates with [mapRotationDeg]
-/// so it stays aligned with how the map is turned (same direction as [MapCamera.rotation]).
-class _CompassFabFace extends StatelessWidget {
-  const _CompassFabFace({required this.mapRotationDeg});
-
-  final double mapRotationDeg;
-
-  @override
-  Widget build(BuildContext context) {
-    return Transform.rotate(
-      angle: mapRotationDeg * (math.pi / 180.0),
-      child: SizedBox(
-        width: 22,
-        height: 22,
-        child: Image.asset(
-          'assets/icons/cardinal-point.png',
-          fit: BoxFit.contain,
-          filterQuality: FilterQuality.medium,
-        ),
-      ),
-    );
-  }
-}
-
-class _RouteOptionCard extends StatefulWidget {
-  const _RouteOptionCard({
-    required this.onTap,
-    required this.child,
-  });
-
-  final VoidCallback onTap;
-  final Widget child;
-
-  @override
-  State<_RouteOptionCard> createState() => _RouteOptionCardState();
-}
-
-class _RouteOptionCardState extends State<_RouteOptionCard> {
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedScale(
-      scale: _pressed ? 0.98 : 1.0,
-      duration: const Duration(milliseconds: 120),
-      curve: Curves.easeOut,
-      child: Card(
-        margin: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTapDown: (_) => setState(() => _pressed = true),
-          onTapUp: (_) => setState(() => _pressed = false),
-          onTapCancel: () => setState(() => _pressed = false),
-          onTap: widget.onTap,
-          child: widget.child,
-        ),
-      ),
-    );
-  }
-}
-
-class _RouteListPanel extends StatelessWidget {
-  const _RouteListPanel({
-    required this.onReturnToSearch,
-    required this.onSheetDragDelta,
-    this.allowSheetResize = true,
-    required this.options,
-    required this.canLoadMore,
-    required this.remainingToReveal,
-    this.remainingOnServer = 0,
-    this.isLoadingMore = false,
-    required this.onLoadMore,
-    required this.onTapOption,
-    required this.scrollController,
-  });
-
-  final VoidCallback onReturnToSearch;
-  final ValueChanged<double> onSheetDragDelta;
-  final bool allowSheetResize;
-  final List<RouteOption> options;
-  final bool canLoadMore;
-  /// Itineraries still hidden locally or in the next fetch batch.
-  final int remainingToReveal;
-  /// Itineraries not yet fetched from the backend (for “N left” copy).
-  final int remainingOnServer;
-  final bool isLoadingMore;
-  final Future<void> Function() onLoadMore;
-  final void Function(RouteOption option, int resultIndex) onTapOption;
-  final ScrollController scrollController;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final itemCount = options.isEmpty
-        ? 1
-        : options.length + (canLoadMore ? 1 : 0);
-    final fastestMinutes = options.isEmpty
-        ? 0
-        : options
-            .map((o) => (o.durationSeconds / 60).round())
-            .reduce(math.min);
-    final shortestWalk = options.isEmpty
-        ? 0
-        : options.map((o) => o.walkDistanceMeters).reduce(math.min);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _RouteSheetDragHandle(
-          onDragDelta: onSheetDragDelta,
-          allowDrag: allowSheetResize,
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
-          child: Row(
-            children: [
-              _mapSheetBackIconButton(
-                context: context,
-                onPressed: onReturnToSearch,
-              ),
-              const Spacer(),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.builder(
-            controller: scrollController,
-            padding: EdgeInsets.zero,
-            itemCount: itemCount,
-            itemBuilder: (context, index) {
-        if (options.isEmpty) {
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-            child: Center(child: Text(l10n.mapSearchRoutesHint)),
-          );
-        }
-        if (canLoadMore && index == options.length) {
-          final batch =
-              math.min(kRouteSearchPageSize, remainingToReveal);
-          final String label;
-          if (isLoadingMore) {
-            label = l10n.mapLoading;
-          } else if (remainingOnServer > 0) {
-            label = batch >= kRouteSearchPageSize
-                ? l10n.mapLoadMoreTripsWithRemaining(
-                    kRouteSearchPageSize,
-                    remainingOnServer,
-                  )
-                : l10n.mapLoadMoreTripsWithRemaining(batch, remainingOnServer);
-          } else {
-            final tripWord =
-                batch == 1 ? l10n.mapTripSingular : l10n.mapTripPlural;
-            label = batch >= kRouteSearchPageSize
-                ? l10n.mapLoadNextTrips(kRouteSearchPageSize)
-                : l10n.mapLoadMoreTrips(batch, tripWord);
-          }
-          return Padding(
-            padding: const EdgeInsets.all(12),
-            child: OutlinedButton(
-              onPressed: isLoadingMore ? null : () => onLoadMore(),
-              child: isLoadingMore
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Text(label),
-            ),
-          );
-        }
-        final item = options[index];
-        final start = item.legs.isEmpty
-            ? null
-            : DateTime.fromMillisecondsSinceEpoch(item.legs.first.startTime);
-        final end = item.legs.isEmpty
-            ? null
-            : DateTime.fromMillisecondsSinceEpoch(item.legs.last.endTime);
-        final timeFmt = DateFormat('h:mm a');
-        final minutes = (item.durationSeconds / 60).round();
-        final isFastest = minutes == fastestMinutes;
-        final isShortestWalk = item.walkDistanceMeters == shortestWalk;
-        final hasExtraWalk = item.walkDistanceMeters > shortestWalk;
-        final scheme = Theme.of(context).colorScheme;
-        final extra = context.extraColors;
-
-        return _RouteOptionCard(
-          onTap: () => onTapOption(item, index),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 18, 12, 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            start == null || end == null
-                                ? '--'
-                                : '${timeFmt.format(start)} - ${timeFmt.format(end)}',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 21,
-                              color: scheme.onSurface,
-                            ),
-                          ),
-                          const SizedBox(height: 7),
-                          _TransitSummaryChipsRow(option: item),
-                          const SizedBox(height: 8),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.directions_walk,
-                                size: 16,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(width: _kMetaIconTextGap),
-                              Text(
-                                formatDistanceForDisplay(
-                                  item.walkDistanceMeters.toDouble(),
-                                ),
-                                style: TextStyle(
-                                  color: hasExtraWalk
-                                      ? extra.walkExtraColor
-                                      : isShortestWalk
-                                          ? extra.walkBestColor
-                                          : scheme.onSurfaceVariant,
-                                  fontWeight: FontWeight.w400,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: _kMetaBulletGap,
-                                ),
-                                child: Text(
-                                  '•',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    height: 1,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant
-                                        .withValues(alpha: 0.42),
-                                  ),
-                                ),
-                              ),
-                              Icon(
-                                Icons.sync_alt,
-                                size: 16,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(width: _kMetaIconTextGap),
-                              Text(
-                                l10n.mapTransferLabel(item.transfers),
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: extra.durationBadgeBackground,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 5,
-                              vertical: 2,
-                            ),
-                            child: Text(
-                              '($minutes min)',
-                              textAlign: TextAlign.right,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w500,
-                                fontSize: 11.5,
-                                color: isFastest
-                                    ? extra.durationBestColor
-                                    : scheme.onSurfaceVariant
-                                        .withValues(alpha: 0.78),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: _kDurationPriceGap),
-                        Text(
-                          l10n.mapPriceLei(item.estimatedPriceLei),
-                          textAlign: TextAlign.right,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15,
-                            color: scheme.onSurface,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _RouteDetailsPanel extends ConsumerWidget {
-  const _RouteDetailsPanel({
-    required this.cityId,
-    required this.option,
-    required this.sheetHeight,
-    required this.onSheetDragDelta,
-    this.onSheetDragEnd,
-    required this.highlightedLegIndex,
-    required this.onLegHighlightChanged,
-    required this.onBack,
-    this.showSaveToFavorites = true,
-  });
-
-  final String cityId;
-  final RouteOption option;
-  final double sheetHeight;
-  final ValueChanged<double> onSheetDragDelta;
-  final VoidCallback? onSheetDragEnd;
-  final int highlightedLegIndex;
-  final ValueChanged<int> onLegHighlightChanged;
-  final VoidCallback onBack;
-  final bool showSaveToFavorites;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final l10n = AppLocalizations.of(context)!;
-    final timeFmt = DateFormat('h:mm a');
-    final scheme = Theme.of(context).colorScheme;
-    final legs = option.legs;
-    final safeHighlight = legs.isEmpty
-        ? 0
-        : math.min(legs.length - 1, math.max(0, highlightedLegIndex));
-    final showItineraryBody = sheetHeight >= _kDetailsSheetBodyMinHeight;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _RouteSheetDragHandle(
-          onDragDelta: onSheetDragDelta,
-          onDragEnd: onSheetDragEnd,
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 6, 16, 8),
-          child: Row(
-            children: [
-              _mapSheetBackIconButton(context: context, onPressed: onBack),
-            ],
-          ),
-        ),
-        if (showItineraryBody)
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${(option.durationSeconds / 60).round()} min',
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.w800,
-                        height: 1.1,
-                        color: scheme.onSurface,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    _TransitSummaryChipsRow(option: option),
-                    const SizedBox(height: 8),
-                    Text(
-                      l10n.mapTransfersAndPrice(
-                        l10n.mapTransferLabel(option.transfers),
-                        l10n.mapPriceLei(option.estimatedPriceLei),
-                      ),
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: scheme.onSurfaceVariant.withValues(alpha: 0.92),
-                      ),
-                    ),
-                    if (option.fareRule.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        option.fareRule,
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                    if (showSaveToFavorites) ...[
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.tonal(
-                          onPressed: () async {
-                            final mapState = ref.read(searchMapStateProvider);
-                            await ref.read(saveRouteControllerProvider).save(
-                                  cityId: cityId,
-                                  option: option,
-                                  originLabel: mapState.originLabel,
-                                  destinationLabel: mapState.destinationLabel,
-                                );
-                            if (context.mounted) {
-                              showUserMessage(
-                                context,
-                                AppUserMessages.addedToFavorites,
-                              );
-                            }
-                          },
-                          child: Text(l10n.mapAddToFavorites),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    Text(
-                      l10n.mapSteps,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    for (var i = 0; i < legs.length; i++)
-                      _RouteTimelineLegRow(
-                        leg: legs[i],
-                        isHighlighted: i == safeHighlight,
-                        timeFmt: timeFmt,
-                        onTap: () => onLegHighlightChanged(i),
-                      ),
-                  ],
-                ),
-              ),
-            )
-        else
-          const Spacer(),
-      ],
-    );
-  }
-}
-
-/// Primary title for a step: mode name + line pill using the same [Color] as the map leg.
-Widget _transitLineTitleRow(
-  RouteLeg leg,
-  ColorScheme scheme,
-  AppLocalizations l10n,
-) {
-  final lineId = _lineIdFromRouteId(leg.routeId);
-  if (_isTransitLeg(leg) && lineId.isNotEmpty) {
-    return Wrap(
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 8,
-      runSpacing: 6,
-      children: [
-        Text(
-          _legLabel(leg.mode, l10n),
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            fontSize: 16,
-            color: scheme.onSurface,
-          ),
-        ),
-        _RouteLineNumberPill(lineId: lineId, routeColor: _legColor(leg)),
-      ],
-    );
-  }
-  return Text(
-    _legBadgeLabel(leg, l10n),
-    style: TextStyle(
-      fontWeight: FontWeight.w700,
-      fontSize: 16,
-      color: scheme.onSurface,
-    ),
-  );
-}
-
-class _RouteTimelineLegRow extends StatelessWidget {
-  const _RouteTimelineLegRow({
-    required this.leg,
-    required this.isHighlighted,
-    required this.timeFmt,
-    required this.onTap,
-  });
-
-  final RouteLeg leg;
-  final bool isHighlighted;
-  final DateFormat timeFmt;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final scheme = Theme.of(context).colorScheme;
-    final variant = scheme.onSurfaceVariant;
-    final start = DateTime.fromMillisecondsSinceEpoch(leg.startTime);
-    final end = DateTime.fromMillisecondsSinceEpoch(leg.endTime);
-    final meta =
-        '${timeFmt.format(start)} – ${timeFmt.format(end)}   •   ${formatDistanceForDisplay(leg.distance)}';
-    final cardRadius = BorderRadius.circular(12);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: isHighlighted
-              ? scheme.primaryContainer.withValues(alpha: 0.32)
-              : scheme.surface,
-          borderRadius: cardRadius,
-          border: isHighlighted
-              ? Border.all(
-                  color: scheme.primary.withValues(alpha: 0.28),
-                  width: 1,
-                )
-              : null,
-          boxShadow: _itineraryStepCardShadow(scheme),
-        ),
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: cardRadius,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: cardRadius,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    '●',
-                    style: TextStyle(
-                      fontSize: 10,
-                      height: 1.2,
-                      color: isHighlighted
-                          ? scheme.primary
-                          : (_isTransitLeg(leg)
-                              ? _itineraryAccentColor(_legColor(leg))
-                              : variant.withValues(alpha: 0.65)),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _modeIconForMode(leg.mode, size: 20),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _transitLineTitleRow(leg, scheme, l10n),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '${leg.fromName} → ${leg.toName}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: variant.withValues(alpha: 0.88),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        meta,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w400,
-                          color: variant.withValues(alpha: 0.75),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-      ),
-    );
-  }
-}
-
-/// Line number badge: solid [routeColor] matches map polyline for that leg.
-class _RouteLineNumberPill extends StatelessWidget {
-  const _RouteLineNumberPill({
-    required this.lineId,
-    required this.routeColor,
-  });
-
-  final String lineId;
-  final Color routeColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = _itineraryAccentColor(routeColor);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: c,
-        borderRadius: BorderRadius.circular(_kPillRadius),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.5),
-          width: 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.12),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: _kPillPadding,
-        child: Text(
-          lineId,
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            fontSize: _kPillLineFontSize,
-            letterSpacing: 0.2,
-            color: _onRouteColorInk(c),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TransitStepChip extends StatelessWidget {
-  const _TransitStepChip({required this.item});
-
-  final _TransitSummaryItem item;
-
-  @override
-  Widget build(BuildContext context) {
-    final variant = Theme.of(context).colorScheme.onSurfaceVariant;
-    final c = item.routeColor;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          item.modeLabel,
-          style: TextStyle(
-            fontWeight: FontWeight.w500,
-            fontSize: 14,
-            color: variant,
-          ),
-        ),
-        if (item.lineId.isNotEmpty) ...[
-          const SizedBox(width: 6),
-          _RouteLineNumberPill(lineId: item.lineId, routeColor: c),
-        ],
-      ],
-    );
-  }
-}

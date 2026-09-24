@@ -196,6 +196,12 @@ abstract class AppLocalizations {
   /// **'Offline timetables'**
   String get offlineTimetables;
 
+  /// No description provided for @offlinePackWhatItCovers.
+  ///
+  /// In en, this message translates to:
+  /// **'Stores bus lines and stop timetables on the phone. Searching a trip from A to B still needs internet.'**
+  String get offlinePackWhatItCovers;
+
   /// No description provided for @offlineOnDevicePack.
   ///
   /// In en, this message translates to:
@@ -250,12 +256,6 @@ abstract class AppLocalizations {
   /// **'Downloaded {size} · {seconds} sec'**
   String offlineDownloadReceivedWithElapsed(String size, int seconds);
 
-  /// No description provided for @offlinePackNotAvailablePreview.
-  ///
-  /// In en, this message translates to:
-  /// **'Not available in preview mode'**
-  String get offlinePackNotAvailablePreview;
-
   /// No description provided for @offlinePackChooseCityFirst.
   ///
   /// In en, this message translates to:
@@ -307,7 +307,7 @@ abstract class AppLocalizations {
   /// No description provided for @timetableDownloadConfirmMessage.
   ///
   /// In en, this message translates to:
-  /// **'Download offline bus timetables for {cityName}? This may use mobile data.'**
+  /// **'Download bus lines and stop timetables for {cityName} onto this phone? Searching a trip from A to B still needs internet. This may use mobile data.'**
   String timetableDownloadConfirmMessage(String cityName);
 
   /// No description provided for @timetableDownloadAction.
@@ -531,12 +531,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Unavailable'**
   String get cityUnavailable;
-
-  /// No description provided for @previewMode.
-  ///
-  /// In en, this message translates to:
-  /// **'Preview mode'**
-  String get previewMode;
 
   /// No description provided for @pressBackAgainToExit.
   ///

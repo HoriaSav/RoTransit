@@ -4,11 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:rotransit_frontend/l10n/app_localizations.dart';
+import 'package:rotransit/l10n/app_localizations.dart';
 
 import '../../../core/branding/operator_branding.dart';
 import '../../../core/format/byte_size_format.dart';
-import '../../../core/config/api_config.dart';
 import '../../../core/theme/accent_badge_style.dart';
 import '../../../core/theme/app_extra_colors.dart';
 import '../../../core/errors/app_user_message.dart';
@@ -22,9 +21,11 @@ import '../../routes/data/offline_transit_sync.dart';
 import '../../routes/data/route_api_repository.dart';
 import '../../routes/domain/route_models.dart';
 import '../../shell/shell_layout.dart';
+import '../../map/data/companion_catalog.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../shell/state/navigation_provider.dart';
 
-const _placeholderCityId = '00000000-0000-0000-0000-000000000001';
+part 'settings_chrome.dart';
 
 String _friendlyOfflinePackSubtitle(
   BuildContext context,
@@ -42,6 +43,10 @@ String _friendlyOfflinePackSubtitle(
   }
   if (dateLabel != null) return l10n.offlinePackDownloaded(dateLabel);
   return l10n.offlinePackAvailableOnDevice;
+}
+
+String _offlineTimetablesRowSubtitle(AppLocalizations l10n, String status) {
+  return '$status\n${l10n.offlinePackWhatItCovers}';
 }
 
 String _truncatePackId(String value, {int max = 10}) {
@@ -77,26 +82,14 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   }
 
   Future<void> _refreshOfflineTimetablesSubtitle() async {
-    final l10n = AppLocalizations.of(context)!;
-    if (!ApiConfig.useBackend) {
-      if (mounted) {
-        setState(() {
-          _offlineTimetablesSubtitle = l10n.offlinePackNotAvailablePreview;
-        });
-      }
-      return;
-    }
-    final cityId = ref.read(searchMapStateProvider).cityId;
-    if (cityId.isEmpty || cityId == _placeholderCityId) {
-      if (mounted) {
-        setState(() {
-          _localOfflineMeta = null;
-          _offlineTimetablesSubtitle = l10n.offlinePackChooseCityFirst;
-        });
-      }
-      ref.read(offlinePackCloudStateProvider.notifier).state =
-          const OfflinePackCloudState();
-      return;
+    final l10n = AppLocalizations.of(context);
+    final cityId = resolvedCityId(ref.read(searchMapStateProvider).cityId);
+    if (isUnresolvedCityId(ref.read(searchMapStateProvider).cityId)) {
+      final name = ref.read(searchMapStateProvider).cityName.trim();
+      ref.read(searchMapStateProvider.notifier).setCityContext(
+            cityId: cityId,
+            cityName: name.isEmpty ? kBrasovCityName : name,
+          );
     }
     final meta = await ref
         .read(offlineTransitCacheRepositoryProvider)
@@ -175,26 +168,17 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   }
 
   Future<void> _pickTimetableDownload() async {
-    final l10n = AppLocalizations.of(context)!;
-    if (!ApiConfig.useBackend) {
-      showUserMessage(
-        context,
-        AppUserMessage.custom(l10n.offlinePackNotAvailablePreview),
-      );
-      return;
-    }
+    final l10n = AppLocalizations.of(context);
 
-    final cityId = ref.read(searchMapStateProvider).cityId;
-    final cityName = ref.read(searchMapStateProvider).cityName.trim();
-    if (cityId.isEmpty || cityId == _placeholderCityId) {
-      showUserMessage(
-        context,
-        AppUserMessage.custom(
-          l10n.offlinePackChooseCityFirst,
-          severity: UserMessageSeverity.warning,
-        ),
-      );
-      return;
+    var cityId = ref.read(searchMapStateProvider).cityId;
+    var cityName = ref.read(searchMapStateProvider).cityName.trim();
+    if (isUnresolvedCityId(cityId)) {
+      cityId = kBrasovCityId;
+      cityName = cityName.isEmpty ? kBrasovCityName : cityName;
+      ref.read(searchMapStateProvider.notifier).setCityContext(
+            cityId: cityId,
+            cityName: cityName,
+          );
     }
 
     unawaited(refreshOfflinePackCloudVersion(ref, cityId));
@@ -309,15 +293,77 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     }
   }
 
+
+  Future<void> _showFareCheatSheet(BuildContext context) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'RATBV fares (static guide)',
+                  style: Theme.of(ctx).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Urban (inside Brașov): about 5 RON per ride on the standard '
+                  'ticket (confirm on ratbv.ro — prices change).\n\n'
+                  'Metropolitan / zone tickets: higher fares for trips into nearby '
+                  'communes (roughly 7–12 RON depending on zone in the GTFS fare table).\n\n'
+                  'Buy tickets: 24pay app, RATBV ticket machines/kiosks, and other '
+                  'channels listed on the operator site. This app does not sell tickets.',
+                ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.tonal(
+                      onPressed: () {
+                        launchUrl(
+                          Uri.parse('https://www.ratbv.ro/'),
+                          mode: LaunchMode.externalApplication,
+                        );
+                      },
+                      child: const Text('ratbv.ro'),
+                    ),
+                    FilledButton.tonal(
+                      onPressed: () {
+                        launchUrl(
+                          Uri.parse('https://24pay.ro/'),
+                          mode: LaunchMode.externalApplication,
+                        );
+                      },
+                      child: const Text('24pay'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final isDark = ref.watch(themeModeProvider) == ThemeMode.dark;
     final teEnabled = ref.watch(teTransportEnabledProvider);
     final locale = ref.watch(localeProvider);
     final cityState = ref.watch(searchMapStateProvider);
-    final cityName =
-        cityState.cityName.trim().isEmpty ? 'Brasov' : cityState.cityName;
+    final cityName = cityState.cityName.trim().isEmpty
+        ? kBrasovCityName
+        : cityState.cityName;
     final offlinePackSyncing = ref.watch(offlinePackSyncInFlightProvider);
     final downloadProgress = ref.watch(offlinePackDownloadProgressProvider);
     final cloudPack = ref.watch(offlinePackCloudStateProvider);
@@ -356,6 +402,31 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             children: [
               _SettingsPageHeader(title: l10n.settingsTitle),
               const SizedBox(height: 18),
+              FutureBuilder(
+                future: CompanionCatalog.instance.meta(),
+                builder: (context, snap) {
+                  final meta = snap.data;
+                  final asOf = meta?.dataAsOf ?? '—';
+                  return _SettingsGroup(
+                    children: [
+                      _SettingsNavRow(
+                        icon: Icons.calendar_month_outlined,
+                        title: 'Brașov data as of',
+                        subtitle: asOf,
+                        onTap: null,
+                      ),
+                      _SettingsDivider(),
+                      _SettingsNavRow(
+                        icon: Icons.payments_outlined,
+                        title: 'Fares & tickets (cheat sheet)',
+                        subtitle: 'Urban vs metropolitan · where to buy',
+                        onTap: () => _showFareCheatSheet(context),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 14),
               _SettingsGroup(
                 children: [
                   _SettingsNavRow(
@@ -370,7 +441,10 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                     title: l10n.offlineTimetables,
                     subtitle: downloadProgress != null
                         ? null
-                        : _offlineTimetablesSubtitle,
+                        : _offlineTimetablesRowSubtitle(
+                            l10n,
+                            _offlineTimetablesSubtitle,
+                          ),
                     subtitleWidget: downloadProgress != null
                         ? _OfflineDownloadProgressSubtitle(
                             progress: downloadProgress,
@@ -378,6 +452,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                               l10n,
                               downloadProgress,
                             ),
+                            coverageHint: l10n.offlinePackWhatItCovers,
                           )
                         : null,
                     trailing: offlinePackSyncing
@@ -481,7 +556,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   }
 
   Future<void> _pickCity() async {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final scheme = Theme.of(context).colorScheme;
     try {
       final cities = await ref.read(routeApiRepositoryProvider).getCities();
@@ -582,343 +657,3 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   }
 }
 
-class _SettingsPageHeader extends StatelessWidget {
-  const _SettingsPageHeader({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
-    return Row(
-      children: [
-        Icon(
-          Icons.settings_rounded,
-          size: 22,
-          color: scheme.primary,
-        ),
-        const SizedBox(width: 8),
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.w700,
-            color: scheme.onSurface,
-            letterSpacing: -0.3,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _SettingsGroup extends StatelessWidget {
-  const _SettingsGroup({required this.children});
-
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final extra = context.extraColors;
-    final scheme = Theme.of(context).colorScheme;
-    final isDark = scheme.brightness == Brightness.dark;
-
-    return Material(
-      color: extra.recentTileBackground,
-      borderRadius: BorderRadius.circular(12),
-      clipBehavior: Clip.antiAlias,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: extra.recentTileBorder),
-          boxShadow: isDark
-              ? null
-              : const [
-                  BoxShadow(
-                    color: Color(0x0A0A3E96),
-                    blurRadius: 8,
-                    offset: Offset(0, 2),
-                  ),
-                ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: children,
-        ),
-      ),
-    );
-  }
-}
-
-class _SettingsDivider extends StatelessWidget {
-  const _SettingsDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    return Divider(
-      height: 1,
-      thickness: 1,
-      indent: 58,
-      endIndent: 14,
-      color: context.extraColors.recentTileBorder,
-    );
-  }
-}
-
-class _SettingsIconBadge extends StatelessWidget {
-  const _SettingsIconBadge({required this.icon});
-
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    final badge = accentBadgeColors(context);
-
-    return Container(
-      width: 36,
-      height: 36,
-      decoration: BoxDecoration(
-        color: badge.background,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      alignment: Alignment.center,
-      child: Icon(
-        icon,
-        size: 20,
-        color: badge.foreground,
-      ),
-    );
-  }
-}
-
-class _SettingsNavRow extends StatelessWidget {
-  const _SettingsNavRow({
-    required this.icon,
-    required this.title,
-    this.subtitle,
-    this.subtitleWidget,
-    this.trailing,
-    this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final Widget? subtitleWidget;
-  final Widget? trailing;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final enabled = onTap != null;
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _SettingsIconBadge(icon: icon),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: enabled
-                            ? scheme.onSurface
-                            : scheme.onSurface.withValues(alpha: 0.55),
-                      ),
-                    ),
-                    if (subtitleWidget != null) ...[
-                      const SizedBox(height: 6),
-                      subtitleWidget!,
-                    ] else if (subtitle != null && subtitle!.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        subtitle!,
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.35,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              trailing ??
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    size: 22,
-                    color: enabled
-                        ? mutedChromeColor(context)
-                        : scheme.onSurfaceVariant.withValues(alpha: 0.35),
-                  ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SettingsToggleRow extends StatelessWidget {
-  const _SettingsToggleRow({
-    required this.icon,
-    required this.title,
-    this.subtitle,
-    required this.value,
-    required this.onChanged,
-  });
-
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 8, 12, 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _SettingsIconBadge(icon: icon),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurface,
-                  ),
-                ),
-                if (subtitle != null && subtitle!.isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle!,
-                    style: TextStyle(
-                      fontSize: 13,
-                      height: 1.35,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          Switch.adaptive(
-            value: value,
-            onChanged: onChanged,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SettingsInfoRow extends StatelessWidget {
-  const _SettingsInfoRow({
-    required this.title,
-    required this.value,
-  });
-
-  final String title;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final extra = context.extraColors;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-      child: Row(
-        children: [
-          _SettingsIconBadge(icon: Icons.info_outline_rounded),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              title,
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: scheme.onSurface,
-              ),
-            ),
-          ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: extra.durationBadgeBackground,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: Text(
-                value,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w600,
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _OfflineDownloadProgressSubtitle extends StatelessWidget {
-  const _OfflineDownloadProgressSubtitle({
-    required this.progress,
-    required this.statusText,
-  });
-
-  final OfflinePackDownloadProgress progress;
-  final String statusText;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          statusText,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurface,
-                fontWeight: FontWeight.w500,
-              ),
-        ),
-        const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            minHeight: 5,
-            value: progress.fraction,
-          ),
-        ),
-      ],
-    );
-  }
-}

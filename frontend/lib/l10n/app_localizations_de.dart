@@ -57,6 +57,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get offlineTimetables => 'Offline-Fahrpläne';
 
   @override
+  String get offlinePackWhatItCovers =>
+      'Speichert Linien und Fahrpläne auf dem Telefon. Die Suche von A nach B braucht weiter Internet.';
+
+  @override
   String offlineOnDevicePack(String version) {
     return 'Paket auf dem Gerät: $version';
   }
@@ -99,10 +103,6 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String get offlinePackNotAvailablePreview =>
-      'Im Vorschaumodus nicht verfügbar';
-
-  @override
   String get offlinePackChooseCityFirst => 'Wähle zuerst eine Stadt';
 
   @override
@@ -133,7 +133,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String timetableDownloadConfirmMessage(String cityName) {
-    return 'Offline-Busfahrpläne für $cityName herunterladen? Dies kann mobile Daten verbrauchen.';
+    return 'Linien und Fahrpläne für $cityName auf dieses Telefon herunterladen? Die Suche von A nach B braucht weiter Internet. Dies kann mobile Daten verbrauchen.';
   }
 
   @override
@@ -266,9 +266,6 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get cityUnavailable => 'Nicht verfügbar';
-
-  @override
-  String get previewMode => 'Vorschaumodus';
 
   @override
   String get pressBackAgainToExit =>

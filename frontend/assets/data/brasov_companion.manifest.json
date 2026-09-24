@@ -1,0 +1,19 @@
+{
+  "city_id": "93715d42-5523-4195-8743-53b6819488c9",
+  "city_name": "Brașov",
+  "anchor_monday": "2026-01-19",
+  "data_as_of": "2026-02-23",
+  "generated_at": "2026-09-24T14:39:56.988477Z",
+  "pack_version": "7449e0abc11cd140d69bc261b91de2dd32dfe848b19e00cf27c504476b0b6d5c",
+  "feed_version": "1771800663",
+  "feed_start_date": "20260123",
+  "feed_end_date": "20270523",
+  "source": "otp/gtfs/ro-ratbv.zip (RATBV via osm2gtfs / ODbL)",
+  "schema_version": "1",
+  "stops": 811,
+  "routes": 84,
+  "route_stop_rows": 2326,
+  "departure_rows": 157698,
+  "db_bytes": 27529216,
+  "db_path": "/home/horia/StudioProjects/RoTransit/frontend/assets/data/brasov_companion.sqlite"
+}
