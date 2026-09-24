@@ -1,29 +1,40 @@
 part of 'settings_tab.dart';
 
 class _SettingsPageHeader extends StatelessWidget {
-  const _SettingsPageHeader({required this.title});
+  const _SettingsPageHeader({required this.title, this.onBack});
 
   final String title;
+  final VoidCallback? onBack;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-
     return Row(
       children: [
-        Icon(
-          Icons.settings_rounded,
-          size: 22,
-          color: scheme.primary,
-        ),
-        const SizedBox(width: 8),
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.w700,
-            color: scheme.onSurface,
-            letterSpacing: -0.3,
+        if (onBack != null) ...[
+          IconButton(
+            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+            onPressed: onBack,
+            icon: const Icon(Icons.arrow_back_rounded),
+          ),
+          const SizedBox(width: 4),
+        ] else ...[
+          Icon(
+            Icons.settings_rounded,
+            size: 22,
+            color: scheme.primary,
+          ),
+          const SizedBox(width: 8),
+        ],
+        Expanded(
+          child: Text(
+            title,
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w700,
+              color: scheme.onSurface,
+              letterSpacing: -0.3,
+            ),
           ),
         ),
       ],

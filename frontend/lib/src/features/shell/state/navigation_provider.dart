@@ -10,6 +10,11 @@ import '../../routes/domain/route_models.dart';
 const kRouteSearchPageSize = 5;
 
 final selectedTabProvider = StateProvider<int>((ref) => 0);
+
+/// When true, Settings is shown as a full-screen layer (navbar hidden).
+final settingsOpenProvider = StateProvider<bool>((ref) => false);
+
+
 final showMapSheetProvider = StateProvider<bool>((ref) => false);
 
 /// Incremented when the route sheet should expand to full height (system back / UI back).

@@ -203,8 +203,9 @@ class _BusLinesViewState extends ConsumerState<_BusLinesView> {
             title: l10n.busTabTimetablesNotDownloadedTitle,
             body: l10n.busTabTimetablesNotDownloadedBody,
             actionLabel: l10n.busTabOpenSettings,
-            onOpenSettings: () =>
-                ref.read(selectedTabProvider.notifier).state = 3,
+            onOpenSettings: () {
+              ref.read(settingsOpenProvider.notifier).state = true;
+            },
           );
         }
         return buses.when(

@@ -71,7 +71,9 @@ class _MainShellState extends ConsumerState<MainShell> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (selectedTab != busTabIndex && selectedTab != 0) const ShellBrandingHeader(),
+          if (selectedTab != busTabIndex && selectedTab != 0 &&
+              !ref.watch(settingsOpenProvider))
+            const ShellBrandingHeader(),
           const Expanded(
             child: Stack(
               clipBehavior: Clip.hardEdge,
@@ -81,6 +83,7 @@ class _MainShellState extends ConsumerState<MainShell> {
                 _SearchGradientOverlay(),
                 _ShellTabPages(),
                 _ShellFloatingNavBarSlot(),
+                _SettingsOverlay(),
               ],
             ),
           ),
@@ -146,11 +149,12 @@ class _ShellTabPages extends ConsumerWidget {
           child: const FavoritesTab(),
         ),
       ),
-      const SettingsTab(),
     ];
 
+    final safeIndex = index.clamp(0, pages.length - 1);
+
     return Positioned.fill(
-      child: IndexedStack(index: index, children: pages),
+      child: IndexedStack(index: safeIndex, children: pages),
     );
   }
 }
@@ -161,6 +165,8 @@ class _ShellFloatingNavBarSlot extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final index = ref.watch(selectedTabProvider);
+    final settingsOpen = ref.watch(settingsOpenProvider);
+    if (settingsOpen) return const SizedBox.shrink();
 
     return Positioned(
       left: kShellFloatingNavHorizontalMargin,
@@ -184,8 +190,26 @@ class _ShellFloatingNavBarSlot extends ConsumerWidget {
                   .closeFavoriteMapPreview();
             }
           }
-          ref.read(selectedTabProvider.notifier).state = value;
+          ref.read(selectedTabProvider.notifier).state = value.clamp(0, 2);
         },
+      ),
+    );
+  }
+}
+
+class _SettingsOverlay extends ConsumerWidget {
+  const _SettingsOverlay();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!ref.watch(settingsOpenProvider)) {
+      return const SizedBox.shrink();
+    }
+    final extra = context.extraColors;
+    return Positioned.fill(
+      child: Material(
+        color: extra.tabBackground,
+        child: const SettingsTab(showBackButton: true),
       ),
     );
   }

@@ -81,19 +81,6 @@ class _MapCompanionTabState extends ConsumerState<MapCompanionTab> {
               children: [
                 Row(
                   children: [
-                    Material(
-                      color: extra.floatingNavBackground,
-                      elevation: 2,
-                      shape: const CircleBorder(),
-                      child: IconButton(
-                        tooltip: 'Settings',
-                        onPressed: () {
-                          ref.read(selectedTabProvider.notifier).state = 3;
-                        },
-                        icon: Icon(Icons.settings_outlined, color: scheme.primary),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
                     Expanded(
                       child: Material(
                         elevation: 2,
@@ -123,6 +110,19 @@ class _MapCompanionTabState extends ConsumerState<MapCompanionTab> {
                             ),
                           ),
                         ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Material(
+                      color: extra.floatingNavBackground,
+                      elevation: 2,
+                      shape: const CircleBorder(),
+                      child: IconButton(
+                        tooltip: 'Settings',
+                        onPressed: () {
+                          ref.read(settingsOpenProvider.notifier).state = true;
+                        },
+                        icon: Icon(Icons.settings_outlined, color: scheme.primary),
                       ),
                     ),
                   ],

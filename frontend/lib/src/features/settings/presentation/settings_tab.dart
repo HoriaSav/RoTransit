@@ -57,7 +57,10 @@ String _truncatePackId(String value, {int max = 10}) {
 }
 
 class SettingsTab extends ConsumerStatefulWidget {
-  const SettingsTab({super.key});
+  const SettingsTab({super.key, this.showBackButton = false});
+
+  /// When true (pushed Settings overlay), show a back control that closes Settings.
+  final bool showBackButton;
 
   @override
   ConsumerState<SettingsTab> createState() => _SettingsTabState();
@@ -390,7 +393,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       body: ColoredBox(
         color: context.extraColors.tabBackground,
         child: SafeArea(
-          top: false,
+          top: widget.showBackButton,
           bottom: false,
           child: ListView(
             padding: EdgeInsets.fromLTRB(
@@ -400,7 +403,12 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
               shellBottomContentPadding(context),
             ),
             children: [
-              _SettingsPageHeader(title: l10n.settingsTitle),
+              _SettingsPageHeader(
+                title: l10n.settingsTitle,
+                onBack: widget.showBackButton
+                    ? () => ref.read(settingsOpenProvider.notifier).state = false
+                    : null,
+              ),
               const SizedBox(height: 18),
               FutureBuilder(
                 future: CompanionCatalog.instance.meta(),

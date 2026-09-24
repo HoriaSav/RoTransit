@@ -86,6 +86,16 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
       keepAlive: true,
       onPositionChanged: _onShellMapPositionChanged,
       onTap: _onShellMapTap,
+      // Race pinch-zoom vs rotate so a normal pinch does not twist the map;
+      // intentional two-finger rotate still wins when twist exceeds threshold.
+      interactionOptions: const InteractionOptions(
+        enableMultiFingerGestureRace: true,
+        rotationThreshold: 28,
+        pinchZoomThreshold: 0.35,
+        rotationWinGestures: MultiFingerGesture.rotate,
+        pinchZoomWinGestures:
+            MultiFingerGesture.pinchZoom | MultiFingerGesture.pinchMove,
+      ),
     );
     _initCacheStore();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1014,7 +1024,7 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
               if (tab != 0 && tab != 1) {
                 // still show on map-ish tabs; hide on favorites/settings dense UIs
               }
-              if (tab == 2 || tab == 3) return const SizedBox.shrink();
+              if (tab == 2) return const SizedBox.shrink();
               return Positioned(
                 right: 14,
                 bottom: fabStackBottom,

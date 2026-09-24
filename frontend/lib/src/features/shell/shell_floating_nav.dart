@@ -59,13 +59,6 @@ class ShellFloatingNavBar extends StatelessWidget {
               label: l10n.navFavorites,
               onTap: () => onDestinationSelected(2),
             ),
-            _Slot(
-              selected: selectedIndex == 3,
-              icon: Icons.settings_outlined,
-              selectedIcon: Icons.settings,
-              label: l10n.navSettings,
-              onTap: () => onDestinationSelected(3),
-            ),
           ],
         ),
       ),
