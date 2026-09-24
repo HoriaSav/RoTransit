@@ -78,7 +78,7 @@ class FavoritesTab extends ConsumerWidget {
                       if (items.isEmpty) {
                         return const Padding(
                           padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
-                          child: Text('Favorite a line from a stop board row.'),
+                          child: Text('Favorite a line from the Timetable tab.'),
                         );
                       }
                       return Column(

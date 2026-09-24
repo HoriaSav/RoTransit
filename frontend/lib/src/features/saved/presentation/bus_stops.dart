@@ -157,19 +157,32 @@ class _BusStopsScreenState extends ConsumerState<_BusStopsScreen> {
           _BusDetailHeader(
             badgeLabel: _badgeLabel,
             title: _headerTitle(l10n),
-            trailing: IconButton(
-              tooltip: l10n.busReverseDirection,
-              onPressed: () => setState(() {
-                _isReverse = !_isReverse;
-                _selectedStopId = null;
-              }),
-              style: IconButton.styleFrom(
-                backgroundColor: extra.durationBadgeBackground,
-              ),
-              icon: Icon(
-                Icons.swap_horiz_rounded,
-                color: accentIconColor(context),
-              ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _LineFavoriteButton(
+                  line: BusLine(
+                    routeId: widget.routeId,
+                    shortName: widget.shortName,
+                    longName: widget.longName,
+                    mode: 'BUS',
+                  ),
+                ),
+                IconButton(
+                  tooltip: l10n.busReverseDirection,
+                  onPressed: () => setState(() {
+                    _isReverse = !_isReverse;
+                    _selectedStopId = null;
+                  }),
+                  style: IconButton.styleFrom(
+                    backgroundColor: extra.durationBadgeBackground,
+                  ),
+                  icon: Icon(
+                    Icons.swap_horiz_rounded,
+                    color: accentIconColor(context),
+                  ),
+                ),
+              ],
             ),
           ),
           Expanded(
@@ -206,36 +219,61 @@ class _BusStopsScreenState extends ConsumerState<_BusStopsScreen> {
                       ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                      child: InputDecorator(
-                        decoration: InputDecoration(
-                          labelText: l10n.searchSelectStop,
-                          border: OutlineInputBorder(
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 14,
+                          ),
+                          shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 4,
-                          ),
+                          alignment: Alignment.centerLeft,
                         ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            isExpanded: true,
-                            value: selected.stopId,
-                            items: [
-                              for (final stop in items)
-                                DropdownMenuItem(
-                                  value: stop.stopId,
-                                  child: Text(
-                                    '${stop.stopSequence}. ${stop.name}',
-                                    overflow: TextOverflow.ellipsis,
+                        onPressed: () async {
+                          final id = await Navigator.of(context).push<String>(
+                            MaterialPageRoute(
+                              builder: (_) => TimetableStopPickerPage(
+                                stops: items,
+                                selectedStopId: selected.stopId,
+                              ),
+                            ),
+                          );
+                          if (!mounted || id == null) return;
+                          setState(() => _selectedStopId = id);
+                        },
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    l10n.searchSelectStop,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: scheme.onSurfaceVariant,
+                                    ),
                                   ),
-                                ),
-                            ],
-                            onChanged: (id) {
-                              if (id == null) return;
-                              setState(() => _selectedStopId = id);
-                            },
-                          ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '${selected.stopSequence}. ${selected.name}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                      color: scheme.onSurface,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Icon(
+                              Icons.unfold_more_rounded,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ],
                         ),
                       ),
                     ),

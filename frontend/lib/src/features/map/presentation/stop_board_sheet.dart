@@ -90,18 +90,6 @@ class _StopBoardSheetState extends ConsumerState<StopBoardSheet> {
     Navigator.of(context).maybePop();
   }
 
-  Future<void> _toggleLineFavorite(StopBoardDeparture dep) async {
-    final line = BusLine(
-      routeId: dep.routeId,
-      shortName: dep.shortName,
-      longName: dep.longName,
-      mode: 'BUS',
-    );
-    await ref.read(favoriteStopsRepositoryProvider).toggleLine(line);
-    ref.read(favoriteLinesRevisionProvider.notifier).state++;
-    if (mounted) setState(() {});
-  }
-
   String _fmtTime(String raw) {
     final mins = CompanionCatalog.timeToMinutes(raw);
     if (mins == null) return raw;
@@ -288,11 +276,6 @@ class _StopBoardSheetState extends ConsumerState<StopBoardSheet> {
                                   fontFeatures: const [FontFeature.tabularFigures()],
                                   color: scheme.primary,
                                 ),
-                              ),
-                              IconButton(
-                                tooltip: 'Favorite line',
-                                onPressed: () => _toggleLineFavorite(dep),
-                                icon: const Icon(Icons.favorite_border, size: 20),
                               ),
                             ],
                           ),

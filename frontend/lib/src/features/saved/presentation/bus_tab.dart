@@ -1,6 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui' show FontFeature;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:rotransit/l10n/app_localizations.dart';
@@ -10,10 +8,12 @@ import '../../../core/state/transport_settings_provider.dart';
 import '../../../core/theme/accent_badge_style.dart';
 import '../../../core/theme/app_extra_colors.dart';
 import '../../routes/domain/route_models.dart';
+import '../../favorites/data/favorite_stops_repository.dart';
 import '../../shell/shell_layout.dart';
 import '../../shell/state/navigation_provider.dart';
 import '../../shell/state/bus_line_open_provider.dart';
 import '../state/saved_providers.dart';
+import 'timetable_stop_picker.dart';
 
 part 'bus_stops.dart';
 part 'bus_timetable.dart';
@@ -37,7 +37,9 @@ class _BusTabState extends ConsumerState<BusTab> {
         final req = ref.read(pendingOpenBusLineProvider);
         if (req == null) return;
         ref.read(pendingOpenBusLineProvider.notifier).state = null;
-        Navigator.of(context).push(
+        FocusManager.instance.primaryFocus?.unfocus();
+        Navigator.of(context)
+            .push(
           MaterialPageRoute<void>(
             builder: (_) => _BusStopsScreen(
               routeId: req.line.routeId,
@@ -45,7 +47,10 @@ class _BusTabState extends ConsumerState<BusTab> {
               longName: req.line.longName,
             ),
           ),
-        );
+        )
+            .then((_) {
+          FocusManager.instance.primaryFocus?.unfocus();
+        });
       });
     });
 
@@ -118,12 +123,34 @@ class _BusLinesView extends ConsumerStatefulWidget {
 
 class _BusLinesViewState extends ConsumerState<_BusLinesView> {
   final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
   String _query = '';
 
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
+  }
+
+  void _openLineBoard(BusLine item) {
+    _searchFocusNode.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+    Navigator.of(context)
+        .push(
+      MaterialPageRoute<void>(
+        builder: (_) => _BusStopsScreen(
+          routeId: item.routeId,
+          shortName: item.shortName,
+          longName: item.longName,
+        ),
+      ),
+    )
+        .then((_) {
+      if (!mounted) return;
+      _searchFocusNode.unfocus();
+      FocusManager.instance.primaryFocus?.unfocus();
+    });
   }
 
   bool _isTeLine(BusLine line) {
@@ -229,9 +256,10 @@ class _BusLinesViewState extends ConsumerState<_BusLinesView> {
               if (teEnabled) Tab(text: l10n.busTabTe),
             ];
             final views = <Widget>[
-              _BusListBody(items: urban),
-              _BusListBody(items: rural),
-              if (teEnabled) _BusListBody(items: te),
+              _BusListBody(items: urban, onOpenLine: _openLineBoard),
+              _BusListBody(items: rural, onOpenLine: _openLineBoard),
+              if (teEnabled)
+                _BusListBody(items: te, onOpenLine: _openLineBoard),
             ];
             return DefaultTabController(
               length: tabs.length,
@@ -242,6 +270,7 @@ class _BusLinesViewState extends ConsumerState<_BusLinesView> {
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                     child: TextField(
                       controller: _searchController,
+                      focusNode: _searchFocusNode,
                       onChanged: (v) => setState(() => _query = v),
                       decoration: InputDecoration(
                         hintText: l10n.busSearchLineHint,
@@ -389,9 +418,10 @@ class _TimetablesNotDownloadedBody extends StatelessWidget {
 }
 
 class _BusListBody extends StatelessWidget {
-  const _BusListBody({required this.items});
+  const _BusListBody({required this.items, required this.onOpenLine});
 
   final List<BusLine> items;
+  final ValueChanged<BusLine> onOpenLine;
 
   @override
   Widget build(BuildContext context) {
@@ -407,14 +437,39 @@ class _BusListBody extends StatelessWidget {
         final item = items[index];
         return _BusLineTile(
           line: item,
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => _BusStopsScreen(
-                routeId: item.routeId,
-                shortName: item.shortName,
-                longName: item.longName,
-              ),
-            ),
+          onTap: () => onOpenLine(item),
+        );
+      },
+    );
+  }
+}
+
+class _LineFavoriteButton extends ConsumerWidget {
+  const _LineFavoriteButton({required this.line});
+
+  final BusLine line;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final revision = ref.watch(favoriteLinesRevisionProvider);
+    final scheme = Theme.of(context).colorScheme;
+    return FutureBuilder<bool>(
+      key: ValueKey<int>(revision),
+      future: ref
+          .read(favoriteStopsRepositoryProvider)
+          .isLineFavorite(line.routeId),
+      builder: (context, snap) {
+        final fav = snap.data == true;
+        return IconButton(
+          tooltip: fav ? 'Remove favorite line' : 'Favorite line',
+          onPressed: () async {
+            await ref.read(favoriteStopsRepositoryProvider).toggleLine(line);
+            ref.read(favoriteLinesRevisionProvider.notifier).state++;
+          },
+          icon: Icon(
+            fav ? Icons.favorite_rounded : Icons.favorite_border,
+            size: 22,
+            color: fav ? scheme.primary : scheme.onSurfaceVariant,
           ),
         );
       },
@@ -448,7 +503,7 @@ class _BusLineTile extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: extra.recentTileBorder),
@@ -464,6 +519,7 @@ class _BusLineTile extends StatelessWidget {
           ),
           child: Row(
             children: [
+              const SizedBox(width: 8),
               Container(
                 constraints: const BoxConstraints(minWidth: 44),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -498,12 +554,13 @@ class _BusLineTile extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
+              _LineFavoriteButton(line: line),
               Icon(
                 Icons.chevron_right_rounded,
                 size: 22,
                 color: mutedChromeColor(context),
               ),
+              const SizedBox(width: 4),
             ],
           ),
         ),
