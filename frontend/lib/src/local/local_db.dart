@@ -11,7 +11,7 @@ class LocalDb {
     final dbPath = p.join(dir.path, 'rotransit.db');
     _db = await openDatabase(
       dbPath,
-      version: 4,
+      version: 5,
       onCreate: (db, version) async => _createTables(db),
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -40,6 +40,9 @@ class LocalDb {
             'ALTER TABLE offline_transit_meta ADD COLUMN pack_version TEXT NOT NULL DEFAULT \'\'',
           );
         }
+        if (oldVersion < 5) {
+          await db.execute('DROP TABLE IF EXISTS sync_queue');
+        }
       },
     );
     return _db!;
@@ -53,14 +56,6 @@ class LocalDb {
         city_id TEXT NOT NULL,
         label TEXT,
         route_metadata TEXT NOT NULL,
-        created_at TEXT NOT NULL
-      );
-    ''');
-    await db.execute('''
-      CREATE TABLE sync_queue(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL,
-        payload TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
     ''');

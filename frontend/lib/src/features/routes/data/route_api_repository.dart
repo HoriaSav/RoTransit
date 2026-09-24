@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -7,13 +6,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
-import '../../../core/config/api_config.dart';
-import '../../../core/format/search_text_normalizer.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/network/connectivity_status.dart';
 import '../domain/route_models.dart';
 import 'offline_transit_cache_repository.dart';
-import 'stop_suggestion_dedupe.dart';
+
+export 'city_catalog.dart';
 
 final routeApiRepositoryProvider = Provider<RouteApiRepository>(
   (ref) => RouteApiRepository(
@@ -53,9 +51,6 @@ class RouteApiRepository {
   }
 
   Future<RouteSearchResponse> search(RouteSearchRequest request) async {
-    if (!ApiConfig.useBackend) {
-      return _mockSearchResponse(request);
-    }
     final response = await _dio.get<Map<String, dynamic>>(
       '/api/routes/search',
       queryParameters: {
@@ -89,15 +84,6 @@ class RouteApiRepository {
   }
 
   Future<List<CityItem>> getCities() async {
-    if (!ApiConfig.useBackend) {
-      return const [
-        CityItem(
-          id: '00000000-0000-0000-0000-000000000001',
-          name: 'Preview City',
-          country: 'RO',
-        ),
-      ];
-    }
     final now = DateTime.now();
     if (_citiesCache != null &&
         _citiesCachedAt != null &&
@@ -142,46 +128,6 @@ class RouteApiRepository {
     required double lon,
     int radiusMeters = 5000,
   }) async {
-    if (!ApiConfig.useBackend) {
-      const mock = [
-        NearbyStopItem(
-          stopId: 'preview-1a',
-          name: 'Rulmentul',
-          lat: 45.6618,
-          lon: 25.6224,
-        ),
-        NearbyStopItem(
-          stopId: 'preview-1b',
-          name: 'Rulmentul',
-          lat: 45.66185,
-          lon: 25.62245,
-        ),
-        NearbyStopItem(
-          stopId: 'preview-2',
-          name: 'Gara Brasov',
-          lat: 45.6507,
-          lon: 25.6067,
-        ),
-        NearbyStopItem(
-          stopId: 'preview-3',
-          name: 'Livada Postei',
-          lat: 45.6449,
-          lon: 25.5887,
-        ),
-        NearbyStopItem(
-          stopId: 'preview-4',
-          name: 'Coresi',
-          lat: 45.6758,
-          lon: 25.6108,
-        ),
-      ];
-      return dedupeNearbyStopItems(
-        mock,
-        mock.length,
-        refLat: lat,
-        refLon: lon,
-      );
-    }
     final cacheKey = _nearbyStopsCacheKey(cityId, lat, lon, radiusMeters);
     final entry = _nearbyStopsCache[cacheKey];
     if (entry != null &&
@@ -213,43 +159,6 @@ class RouteApiRepository {
     double? refLat,
     double? refLon,
   }) async {
-    if (!ApiConfig.useBackend) {
-      const mock = [
-        StopSearchItem(
-          stopId: 'preview-1a',
-          name: 'Rulmentul',
-          lat: 45.6618,
-          lon: 25.6224,
-        ),
-        StopSearchItem(
-          stopId: 'preview-1b',
-          name: 'Rulmentul',
-          lat: 45.66185,
-          lon: 25.62245,
-        ),
-        StopSearchItem(
-          stopId: 'preview-2',
-          name: 'Gara Brasov',
-          lat: 45.6507,
-          lon: 25.6067,
-        ),
-        StopSearchItem(
-          stopId: 'preview-3',
-          name: 'Livada Postei',
-          lat: 45.6449,
-          lon: 25.5887,
-        ),
-      ];
-      final q = normalizeSearchText(query);
-      final filtered =
-          mock.where((s) => normalizeSearchText(s.name).contains(q)).toList();
-      return dedupeStopSearchItems(
-        filtered,
-        limit,
-        refLat: refLat,
-        refLon: refLon,
-      );
-    }
     final queryParameters = <String, dynamic>{
       'cityId': cityId,
       'q': query,
@@ -279,12 +188,6 @@ class RouteApiRepository {
     double? fallbackLat,
     double? fallbackLon,
   }) async {
-    if (!ApiConfig.useBackend) {
-      if (fallbackLat != null && fallbackLon != null) {
-        return '$fallbackLat,$fallbackLon';
-      }
-      return origin;
-    }
     try {
       final response = await _dio.get<Map<String, dynamic>>(
         '/api/stops/resolve-for-route',
@@ -312,20 +215,6 @@ class RouteApiRepository {
   }
 
   Future<List<BusLine>> listBuses({required String cityId}) async {
-    if (!ApiConfig.useBackend) {
-      return const [
-        BusLine(
-            routeId: 'ROUTE:61',
-            shortName: '61',
-            longName: 'Center - Rulmentul',
-            mode: 'BUS'),
-        BusLine(
-            routeId: 'ROUTE:17',
-            shortName: '17',
-            longName: 'Gara - Coresi',
-            mode: 'BUS'),
-      ];
-    }
     Future<List<BusLine>> fromCache() async {
       final cached = await _offlineTransitCache.getBuses(cityId);
       return cached ?? <BusLine>[];
@@ -355,28 +244,6 @@ class RouteApiRepository {
     required String routeId,
     String? directionId,
   }) async {
-    if (!ApiConfig.useBackend) {
-      return const [
-        RouteStop(
-            stopId: 'STOP:1',
-            name: 'Gara Brasov',
-            lat: 45.6507,
-            lon: 25.6067,
-            stopSequence: 1),
-        RouteStop(
-            stopId: 'STOP:2',
-            name: 'Onix',
-            lat: 45.6541,
-            lon: 25.6001,
-            stopSequence: 2),
-        RouteStop(
-            stopId: 'STOP:3',
-            name: 'Rulmentul',
-            lat: 45.6618,
-            lon: 25.6224,
-            stopSequence: 3),
-      ];
-    }
     Future<List<RouteStop>> fromCache() async {
       final cached = await _offlineTransitCache.getRouteStops(
         cityId: cityId,
@@ -416,22 +283,6 @@ class RouteApiRepository {
     required DateTime serviceDate,
     String? directionId,
   }) async {
-    if (!ApiConfig.useBackend) {
-      return const StopTimetable(
-        cityId: 'preview',
-        routeId: 'ROUTE:61',
-        stopId: 'STOP:1',
-        serviceDate: '2026-04-01',
-        departures: [
-          StopTimetableEntry(
-              tripId: 'TRIP:1', headsign: 'Center', departureTime: '08:10:00'),
-          StopTimetableEntry(
-              tripId: 'TRIP:2', headsign: 'Center', departureTime: '08:25:00'),
-          StopTimetableEntry(
-              tripId: 'TRIP:3', headsign: 'Center', departureTime: '08:40:00'),
-        ],
-      );
-    }
     final dateStr = DateFormat('yyyy-MM-dd').format(serviceDate);
     StopTimetable emptyForDate() => StopTimetable(
           cityId: cityId,
@@ -477,14 +328,6 @@ class RouteApiRepository {
     required String cityId,
     required DateTime anchorMonday,
   }) async {
-    if (!ApiConfig.useBackend) {
-      return OfflinePackMeta(
-        cityId: cityId,
-        anchorMonday: DateFormat('yyyy-MM-dd').format(anchorMonday),
-        packVersion: '',
-        generatedAt: '',
-      );
-    }
     final anchor = DateFormat('yyyy-MM-dd').format(anchorMonday);
     final key = '$cityId|$anchor';
     return _offlinePackMetaInflight.putIfAbsent(key, () {
@@ -532,7 +375,6 @@ class RouteApiRepository {
     void Function(int received, int total)? onProgress,
     VoidCallback? onSavingStarted,
   }) async {
-    if (!ApiConfig.useBackend) return;
     final anchor = DateFormat('yyyy-MM-dd').format(anchorMonday);
     final response = await _dio.get<ResponseBody>(
       '/api/buses/offline-pack',
@@ -570,163 +412,6 @@ class RouteApiRepository {
     await _offlineTransitCache.applyOfflinePackJson(
       decoded,
       expectedCityId: cityId,
-    );
-  }
-
-  Future<SavedRouteValidation> validateSavedRoute({
-    required String routeId,
-    required String deviceUserId,
-    required DateTime serviceDateTime,
-  }) async {
-    if (!ApiConfig.useBackend) {
-      return const SavedRouteValidation(isValid: true, reason: 'PREVIEW_MODE');
-    }
-    final response = await _dio.get<Map<String, dynamic>>(
-      '/api/routes/saved/$routeId/validate',
-      queryParameters: {
-        'deviceUserId': deviceUserId,
-        'serviceDate': DateFormat('yyyy-MM-dd').format(serviceDateTime),
-        'serviceTime': DateFormat('HH:mm:ss').format(serviceDateTime),
-      },
-    );
-    return SavedRouteValidation.fromJson(response.data ?? <String, dynamic>{});
-  }
-
-  Future<List<SavedRouteItem>> getSavedRoutes({
-    required String deviceUserId,
-    String? cityId,
-  }) async {
-    if (!ApiConfig.useBackend) return const [];
-    final response = await _dio.get<List<dynamic>>(
-      '/api/routes/saved',
-      queryParameters: {
-        'deviceUserId': deviceUserId,
-        if (cityId != null && cityId.isNotEmpty) 'cityId': cityId,
-      },
-    );
-    final data = response.data ?? <dynamic>[];
-    return data
-        .map((e) => SavedRouteItem.fromJson(e as Map<String, dynamic>))
-        .where((e) => e.id.isNotEmpty)
-        .toList();
-  }
-
-  Future<void> saveRoute({
-    required String deviceUserId,
-    required String cityId,
-    required String routeMetadata,
-    String? label,
-  }) async {
-    if (!ApiConfig.useBackend) return;
-    await _dio.post(
-      '/api/routes/save',
-      data: {
-        'deviceUserId': deviceUserId,
-        'cityId': cityId,
-        'label': label ?? 'Saved journey',
-        'routeMetadata': routeMetadata,
-      },
-    );
-  }
-
-  Future<void> deleteSavedRoute({
-    required String routeId,
-    required String deviceUserId,
-  }) async {
-    if (!ApiConfig.useBackend) return;
-    await _dio.delete<void>(
-      '/api/routes/saved/$routeId',
-      queryParameters: {'deviceUserId': deviceUserId},
-    );
-  }
-
-  RouteSearchResponse _mockSearchResponse(RouteSearchRequest request) {
-    final base = request.serviceTime.millisecondsSinceEpoch;
-    RouteLeg leg({
-      required String mode,
-      required String from,
-      required String to,
-      required int startOffsetMinutes,
-      required int durationMinutes,
-      required double distance,
-    }) {
-      final start = base + Duration(minutes: startOffsetMinutes).inMilliseconds;
-      final end = start + Duration(minutes: durationMinutes).inMilliseconds;
-      return RouteLeg(
-        mode: mode,
-        routeId: mode == 'WALK' ? '' : 'PREVIEW:$mode',
-        fromName: from,
-        fromLat: 0,
-        fromLon: 0,
-        toName: to,
-        toLat: 0,
-        toLon: 0,
-        startTime: start,
-        endTime: end,
-        distance: distance,
-      );
-    }
-
-    final routes = List<RouteOption>.generate(12, (i) {
-      final firstWalk = 4 + (i % 3);
-      final busRide = 18 + (i * 2);
-      final secondWalk = 3 + (i % 4);
-      final transfers = i % 2;
-      return RouteOption(
-        durationSeconds:
-            (firstWalk + busRide + secondWalk + transfers * 6) * 60,
-        transfers: transfers,
-        walkDistanceMeters: 350 + i * 50,
-        estimatedPriceLei: 5,
-        fareRule: '5 lei / 90 min from first transit boarding',
-        legs: [
-          leg(
-            mode: 'WALK',
-            from: request.origin,
-            to: 'Nearest stop',
-            startOffsetMinutes: 0,
-            durationMinutes: firstWalk,
-            distance: 220 + i * 10,
-          ),
-          leg(
-            mode: 'BUS',
-            from: 'Nearest stop',
-            to: transfers == 0 ? request.destination : 'Central interchange',
-            startOffsetMinutes: firstWalk + 2,
-            durationMinutes: busRide,
-            distance: 4300 + i * 150,
-          ),
-          if (transfers == 1)
-            leg(
-              mode: 'TRAM',
-              from: 'Central interchange',
-              to: request.destination,
-              startOffsetMinutes: firstWalk + busRide + 8,
-              durationMinutes: 9,
-              distance: 1800 + i * 60,
-            ),
-          leg(
-            mode: 'WALK',
-            from: 'Final stop',
-            to: request.destination,
-            startOffsetMinutes: firstWalk + busRide + 10,
-            durationMinutes: secondWalk,
-            distance: 130 + i * 8,
-          ),
-        ],
-      );
-    });
-    final pageStart = request.offset;
-    final pageEnd = math.min(pageStart + request.limit, routes.length);
-    final page = routes.sublist(pageStart, pageEnd);
-    return RouteSearchResponse(
-      cityId: request.cityId,
-      cityName: 'Preview City',
-      offset: request.offset,
-      limit: request.limit,
-      total: routes.length,
-      hasMore: pageEnd < routes.length,
-      routes: page,
     );
   }
 }

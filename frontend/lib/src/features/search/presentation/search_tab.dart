@@ -4,9 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:dio/dio.dart';
-import 'package:rotransit_frontend/l10n/app_localizations.dart';
+import 'package:rotransit/l10n/app_localizations.dart';
 
-import '../../../core/config/api_config.dart';
+import '../../../core/branding/operator_branding.dart';
 import '../../../core/theme/app_extra_colors.dart';
 import '../../../core/format/distance_format.dart';
 import '../../../core/location/user_location_helpers.dart';
@@ -14,15 +14,18 @@ import '../../../core/location/user_location_provider.dart';
 import '../../../core/network/connectivity_status.dart';
 import '../../../core/errors/app_user_message.dart';
 import '../../../core/ui/user_feedback.dart';
-import '../../routes/data/local_saved_routes_repository.dart';
 import '../../routes/data/offline_transit_cache_repository.dart';
 import '../../routes/data/route_api_repository.dart';
 import '../../routes/data/stop_suggestion_dedupe.dart';
 import '../../routes/domain/route_models.dart';
 import '../data/recent_searches_repository.dart';
+import '../domain/search_query.dart';
 import '../state/search_quick_access_providers.dart';
 import '../../shell/shell_layout.dart';
 import '../../shell/state/navigation_provider.dart';
+
+part 'search_form_fields.dart';
+part 'station_search_sheet.dart';
 
 class SearchTab extends ConsumerStatefulWidget {
   const SearchTab({
@@ -37,14 +40,13 @@ class SearchTab extends ConsumerStatefulWidget {
 }
 
 class _SearchTabState extends ConsumerState<SearchTab> {
-  static const _fallbackCityId = '00000000-0000-0000-0000-000000000001';
   final _fromCtrl = TextEditingController();
   final _toCtrl = TextEditingController();
   DateTime? _date;
   TimeOfDay? _time;
   bool _loading = false;
-  String? _cityId;
-  String _cityName = 'RoTransit';
+  String _cityId = kBrasovCityId;
+  String _cityName = kBrasovCityName;
   StopSearchItem? _selectedFromStop;
   StopSearchItem? _selectedToStop;
 
@@ -62,37 +64,20 @@ class _SearchTabState extends ConsumerState<SearchTab> {
     return e.response?.statusCode == 404 && code == 'CITY_NOT_FOUND';
   }
 
-  Future<CityItem?> _resolveBackendCity({
+  Future<CityItem> _resolveBackendCity({
     String? preferredId,
     String? preferredName,
   }) async {
     final cities = await ref.read(routeApiRepositoryProvider).getCities();
-    if (cities.isEmpty) return null;
-    if (preferredId != null && preferredId.isNotEmpty) {
-      for (final city in cities) {
-        if (city.id == preferredId) return city;
-      }
-    }
-    if (preferredName != null && preferredName.trim().isNotEmpty) {
-      final needle = preferredName.trim().toLowerCase();
-      for (final city in cities) {
-        if (city.name.trim().toLowerCase() == needle) return city;
-      }
-    }
-    return cities.first;
-  }
-
-  Future<bool> _refreshCityContextFromBackend({
-    String? preferredId,
-    String? preferredName,
-  }) async {
-    if (!ApiConfig.useBackend) return false;
-    final city = await _resolveBackendCity(
+    return resolveCatalogCity(
+      cities,
       preferredId: preferredId,
       preferredName: preferredName,
     );
-    if (city == null) return false;
-    if (!mounted) return false;
+  }
+
+  void _applyCity(CityItem city) {
+    if (!mounted) return;
     setState(() {
       _cityId = city.id;
       _cityName = city.name;
@@ -101,6 +86,18 @@ class _SearchTabState extends ConsumerState<SearchTab> {
           cityId: city.id,
           cityName: city.name,
         );
+  }
+
+  Future<bool> _refreshCityContextFromBackend({
+    String? preferredId,
+    String? preferredName,
+  }) async {
+    final city = await _resolveBackendCity(
+      preferredId: preferredId,
+      preferredName: preferredName,
+    );
+    if (!mounted) return false;
+    _applyCity(city);
     return true;
   }
   @override
@@ -121,6 +118,10 @@ class _SearchTabState extends ConsumerState<SearchTab> {
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      ref.read(searchMapStateProvider.notifier).setCityContext(
+            cityId: _cityId,
+            cityName: _cityName,
+          );
       ref.read(userLocationProvider.notifier).resolve();
     });
   }
@@ -145,16 +146,16 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   }
 
   Future<void> _selectStation({required bool isFrom}) async {
-    if (_cityId == null) {
+    if (_cityId.isEmpty) {
       await _loadSearchSeedData();
     }
-    if (_cityId == null) {
+    if (_cityId.isEmpty) {
       if (!mounted) return;
       showUserMessage(context, AppUserMessages.cityContextUnavailable);
       return;
     }
     if (!mounted) return;
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final initial = isFrom ? _fromCtrl.text : _toCtrl.text;
     final selected = await Navigator.of(context).push<_StationSelectionResult>(
       MaterialPageRoute(
@@ -190,52 +191,15 @@ class _SearchTabState extends ConsumerState<SearchTab> {
         preferredId: _cityId,
         preferredName: _cityName,
       );
-      if (resolved == null) {
-        if (!mounted) return;
-        if (ApiConfig.useBackend) {
-          setState(() {
-            _cityId = null;
-            _cityName = 'RoTransit';
-          });
-        } else {
-          final l10n = AppLocalizations.of(context)!;
-          setState(() {
-            _cityId = _fallbackCityId;
-            _cityName = l10n.previewMode;
-          });
-        }
-        return;
-      }
       if (!mounted) return;
-      setState(() {
-        _cityId = resolved.id;
-        _cityName = resolved.name;
-      });
-      ref.read(searchMapStateProvider.notifier).setCityContext(
-            cityId: resolved.id,
-            cityName: resolved.name,
-          );
+      _applyCity(resolved);
     } on DioException catch (e) {
       if (!mounted) return;
-      setState(() {
-        _cityId = null;
-        _cityName = 'RoTransit';
-      });
+      _applyCity(kBrasovCityItem);
       showUserError(context, e);
     } catch (_) {
       if (!mounted) return;
-      if (ApiConfig.useBackend) {
-        setState(() {
-          _cityId = null;
-          _cityName = 'RoTransit';
-        });
-      } else {
-        final l10n = AppLocalizations.of(context)!;
-        setState(() {
-          _cityId = _fallbackCityId;
-          _cityName = l10n.previewMode;
-        });
-      }
+      _applyCity(kBrasovCityItem);
     }
   }
 
@@ -259,15 +223,13 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   Future<void> _applyRecentSearch(RecentSearchEntry entry) async {
     var resolvedCityId = entry.cityId;
     var resolvedCityName = entry.cityName;
-    if (ApiConfig.useBackend) {
-      final ok = await _refreshCityContextFromBackend(
-        preferredId: entry.cityId,
-        preferredName: entry.cityName,
-      );
-      if (ok && mounted) {
-        resolvedCityId = _cityId ?? entry.cityId;
-        resolvedCityName = _cityName;
-      }
+    final ok = await _refreshCityContextFromBackend(
+      preferredId: entry.cityId,
+      preferredName: entry.cityName,
+    );
+    if (ok && mounted) {
+      resolvedCityId = _cityId;
+      resolvedCityName = _cityName;
     }
     final now = DateTime.now();
     if (!mounted) return;
@@ -285,50 +247,6 @@ class _SearchTabState extends ConsumerState<SearchTab> {
           cityId: resolvedCityId,
           cityName: resolvedCityName,
         );
-  }
-
-  void _applyFavoriteJourney(SavedJourneyVm journey) {
-    final legs = journey.route.legs;
-    if (legs.isEmpty) return;
-    final first = legs.first;
-    final last = legs.last;
-    final firstTransit = firstTransitLegOf(journey.route);
-    final lastTransit = lastTransitLegOf(journey.route);
-    var fromName = journeyEndpointNames(journey.route).from;
-    var toName = journeyEndpointNames(journey.route).to;
-    if (fromName.isEmpty || toName.isEmpty) {
-      final title = savedJourneyTitle(label: journey.label, route: journey.route);
-      final parts = title.split(' – ');
-      if (parts.length >= 2) {
-        if (fromName.isEmpty) fromName = parts.first.trim();
-        if (toName.isEmpty) toName = parts.last.trim();
-      }
-    }
-    if (fromName.isEmpty) {
-      fromName = firstTransit?.fromName ?? first.fromName;
-    }
-    if (toName.isEmpty) {
-      toName = lastTransit?.toName ?? last.toName;
-    }
-    setState(() {
-      _fromCtrl.text = fromName;
-      _toCtrl.text = toName;
-      _selectedFromStop = StopSearchItem(
-        stopId: 'fav-from:${journey.id}',
-        name: fromName,
-        lat: firstTransit?.fromLat ?? first.fromLat,
-        lon: firstTransit?.fromLon ?? first.fromLon,
-      );
-      _selectedToStop = StopSearchItem(
-        stopId: 'fav-to:${journey.id}',
-        name: toName,
-        lat: lastTransit?.toLat ?? last.toLat,
-        lon: lastTransit?.toLon ?? last.toLon,
-      );
-      _date ??= DateTime.now();
-      _time ??= TimeOfDay.now();
-      _cityId = journey.cityId;
-    });
   }
 
   bool _isCoordinateLikeStop(StopSearchItem stop) {
@@ -393,10 +311,10 @@ class _SearchTabState extends ConsumerState<SearchTab> {
       showUserMessage(context, AppUserMessages.completeSearchFields);
       return;
     }
-    if (_cityId == null) {
+    if (_cityId.isEmpty) {
       await _loadSearchSeedData();
     }
-    if (_cityId == null) {
+    if (_cityId.isEmpty) {
       if (!mounted) return;
       showUserMessage(context, AppUserMessages.cityContextUnavailable);
       return;
@@ -426,19 +344,14 @@ class _SearchTabState extends ConsumerState<SearchTab> {
       }
 
       Future<RouteSearchResponse> runSearchForCity(String cityId) async {
-        final origin = '${fromStop.lat},${fromStop.lon}';
-        final isCoordinateDestination = toStop.stopId.startsWith('map:') ||
-            toStop.stopId.startsWith('gps:');
+        final origin = latLonPoint(fromStop.lat, fromStop.lon);
+        final isCoordinateDestination = isCoordinatePickedStop(toStop);
         Future<RouteSearchResponse> runWithDestination(String destination) async {
-          final request = RouteSearchRequest(
+          final request = buildRouteSearchRequest(
             cityId: cityId,
             origin: origin,
             destination: destination,
-            serviceDate: dt,
-            serviceTime: dt,
-            offset: 0,
-            limit: kRouteSearchPageSize,
-            includeGeometry: false,
+            serviceDateTime: dt,
           );
           final response = await ref.read(routeApiRepositoryProvider).search(request);
           ref.read(searchMapStateProvider.notifier).setResults(
@@ -454,7 +367,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
           return response;
         }
 
-        final directDestination = '${toStop.lat},${toStop.lon}';
+        final directDestination = latLonPoint(toStop.lat, toStop.lon);
         var response = await runWithDestination(directDestination);
         final shouldTryResolveFallback =
             !isCoordinateDestination && response.routes.isEmpty;
@@ -478,25 +391,25 @@ class _SearchTabState extends ConsumerState<SearchTab> {
 
       RouteSearchResponse response;
       try {
-        response = await runSearchForCity(_cityId!);
+        response = await runSearchForCity(_cityId);
       } on DioException catch (e) {
         if (!_isCityNotFound(e)) rethrow;
         final recovered = await _refreshCityContextFromBackend(
           preferredName: _cityName,
         );
-        if (!recovered || _cityId == null || _cityId!.isEmpty) rethrow;
-        response = await runSearchForCity(_cityId!);
+        if (!recovered || _cityId.isEmpty) rethrow;
+        response = await runSearchForCity(_cityId);
       }
 
       final recentFromName = _resolvedRecentFromName(
         selectedFrom: fromStop,
         response: response,
-        l10n: AppLocalizations.of(context)!,
+        l10n: AppLocalizations.of(context),
       );
       final recentToName = _resolvedRecentToName(
         selectedTo: toStop,
         response: response,
-        l10n: AppLocalizations.of(context)!,
+        l10n: AppLocalizations.of(context),
       );
       ref.read(searchMapStateProvider.notifier).setJourneyLabels(
             originLabel: recentFromName,
@@ -550,7 +463,7 @@ class _SearchTabState extends ConsumerState<SearchTab> {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     ref.listen<SearchMapState>(searchMapStateProvider, (prev, next) {
       if (next.cityId.isEmpty || next.cityId == _cityId) return;
       setState(() {
@@ -909,8 +822,9 @@ class _SearchTabState extends ConsumerState<SearchTab> {
     final lat = double.tryParse(parts.first.trim());
     final lon = double.tryParse(parts.last.trim());
     if (lat == null || lon == null) return null;
+    if (!isUsableLatLon(lat, lon)) return null;
     return StopSearchItem(
-      stopId: 'map:$lat,$lon',
+      stopId: coordinateStopId(kind: 'map', lat: lat, lon: lon),
       name: isFrom ? l10n.origin : l10n.destination,
       lat: lat,
       lon: lon,
@@ -918,504 +832,3 @@ class _SearchTabState extends ConsumerState<SearchTab> {
   }
 }
 
-class _StationField extends StatefulWidget {
-  const _StationField({
-    required this.label,
-    required this.hintText,
-    required this.controller,
-    required this.onTapPicker,
-    required this.border,
-    required this.fieldStyle,
-    required this.labelStyle,
-  });
-
-  final String label;
-  final String hintText;
-  final TextEditingController controller;
-  final VoidCallback onTapPicker;
-  final OutlineInputBorder border;
-  final TextStyle fieldStyle;
-  final TextStyle labelStyle;
-
-  @override
-  State<_StationField> createState() => _StationFieldState();
-}
-
-class _StationFieldState extends State<_StationField> {
-  @override
-  void initState() {
-    super.initState();
-    widget.controller.addListener(_onTextChanged);
-  }
-
-  @override
-  void didUpdateWidget(covariant _StationField oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_onTextChanged);
-      widget.controller.addListener(_onTextChanged);
-    }
-  }
-
-  @override
-  void dispose() {
-    widget.controller.removeListener(_onTextChanged);
-    super.dispose();
-  }
-
-  void _onTextChanged() => setState(() {});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextField(
-          controller: widget.controller,
-          readOnly: true,
-          onTap: widget.onTapPicker,
-          style: widget.fieldStyle,
-          decoration: InputDecoration(
-            labelText: widget.label,
-            labelStyle: widget.labelStyle,
-            floatingLabelStyle: widget.labelStyle,
-            hintText: widget.hintText,
-            hintStyle: widget.fieldStyle.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w400,
-            ),
-            border: widget.border,
-            enabledBorder: widget.border,
-            focusedBorder: widget.border.copyWith(
-              borderSide: BorderSide(
-                color: Theme.of(context).colorScheme.primary,
-                width: 2,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _DateTimeField extends StatelessWidget {
-  const _DateTimeField({
-    required this.label,
-    required this.value,
-    required this.onTap,
-    required this.border,
-    required this.valueStyle,
-    required this.labelStyle,
-  });
-
-  final String label;
-  final String value;
-  final VoidCallback onTap;
-  final OutlineInputBorder border;
-  final TextStyle valueStyle;
-  final TextStyle labelStyle;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
-      child: InputDecorator(
-        decoration: InputDecoration(
-          isDense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-          labelText: label,
-          labelStyle: labelStyle,
-          floatingLabelStyle: labelStyle,
-          border: border,
-          enabledBorder: border,
-          focusedBorder: border.copyWith(
-            borderSide: BorderSide(
-              color: Theme.of(context).colorScheme.primary,
-              width: 1.4,
-            ),
-          ),
-        ),
-        child: Text(value, style: valueStyle),
-      ),
-    );
-  }
-}
-
-class _StationSearchSheet extends ConsumerStatefulWidget {
-  const _StationSearchSheet({
-    required this.title,
-    required this.cityId,
-    required this.initialQuery,
-  });
-
-  final String title;
-  final String? cityId;
-  final String initialQuery;
-
-  @override
-  ConsumerState<_StationSearchSheet> createState() =>
-      _StationSearchSheetState();
-}
-
-class _StationSearchSheetState extends ConsumerState<_StationSearchSheet> {
-  static const int _nearbyRadiusM = 5000;
-  static const int _nearbyListLimit = 40;
-
-  late final TextEditingController _queryCtrl;
-  Timer? _debounce;
-  bool _loading = false;
-  List<StopSearchItem> _results = const [];
-  int _loadGen = 0;
-
-  UserLocationState get _userLoc => ref.read(userLocationProvider);
-
-  double get _refLat => _userLoc.lat ?? kDefaultSearchRefLat;
-  double get _refLon => _userLoc.lon ?? kDefaultSearchRefLon;
-
-  @override
-  void initState() {
-    super.initState();
-    _queryCtrl = TextEditingController(text: widget.initialQuery);
-    _queryCtrl.addListener(_onQueryChanged);
-    _bootstrapSheet();
-  }
-
-  Future<void> _bootstrapSheet() async {
-    if (!mounted || widget.cityId == null) return;
-    final gen = ++_loadGen;
-    setState(() => _loading = true);
-
-    final loc = await ref.read(userLocationProvider.notifier).resolve();
-    if (!mounted || gen != _loadGen) return;
-
-    await _loadNearbyForRef(
-      loc.hasFix ? loc.lat! : kDefaultSearchRefLat,
-      loc.hasFix ? loc.lon! : kDefaultSearchRefLon,
-      gen: gen,
-      showGlobalSpinner: true,
-    );
-  }
-
-  @override
-  void dispose() {
-    _debounce?.cancel();
-    _queryCtrl.removeListener(_onQueryChanged);
-    _queryCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _loadNearbyForRef(
-    double lat,
-    double lon, {
-    required int gen,
-    required bool showGlobalSpinner,
-  }) async {
-    if (!mounted || widget.cityId == null) return;
-    if (gen != _loadGen) return;
-
-    if (showGlobalSpinner) {
-      setState(() => _loading = true);
-    }
-
-    final cityId = widget.cityId!;
-    final offline = ref.read(offlineTransitCacheRepositoryProvider);
-    final packMeta = await offline.getMetaForCity(cityId);
-    var fromPack = const <StopSearchItem>[];
-    if (packMeta != null) {
-      fromPack = await offline.nearbyStopsFromPack(
-        cityId: cityId,
-        lat: lat,
-        lon: lon,
-        radiusMeters: _nearbyRadiusM,
-        limit: _nearbyListLimit,
-      );
-    }
-
-    if (!mounted || gen != _loadGen) return;
-    if (fromPack.isNotEmpty) {
-      setState(() {
-        _results = fromPack;
-        _loading = false;
-      });
-    }
-
-    final skipNetwork = ApiConfig.useBackend && !await isDeviceOnline();
-    if (skipNetwork) {
-      if (!mounted || gen != _loadGen) return;
-      setState(() {
-        if (fromPack.isEmpty) _results = const [];
-        _loading = false;
-      });
-      return;
-    }
-
-    try {
-      final stops = await ref.read(routeApiRepositoryProvider).getNearbyStops(
-            cityId: cityId,
-            lat: lat,
-            lon: lon,
-            radiusMeters: _nearbyRadiusM,
-          );
-      if (!mounted || gen != _loadGen) return;
-      setState(() {
-        _results = stops
-            .map(
-              (e) => StopSearchItem(
-                stopId: e.stopId,
-                name: e.name,
-                lat: e.lat,
-                lon: e.lon,
-              ),
-            )
-            .toList();
-        _loading = false;
-      });
-    } catch (_) {
-      if (!mounted || gen != _loadGen) return;
-      setState(() {
-        if (_results.isEmpty) _results = const [];
-        _loading = false;
-      });
-    }
-  }
-
-  void _onQueryChanged() {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), _searchStops);
-  }
-
-  Future<void> _searchStops() async {
-    if (widget.cityId == null) return;
-    final q = _queryCtrl.text.trim();
-    if (q.isEmpty) {
-      final gen = ++_loadGen;
-      await _loadNearbyForRef(
-        _refLat,
-        _refLon,
-        gen: gen,
-        showGlobalSpinner: true,
-      );
-      return;
-    }
-    setState(() => _loading = true);
-    try {
-      final offlineRepo = ref.read(offlineTransitCacheRepositoryProvider);
-      final offlineItems = await offlineRepo.searchStopsInPack(
-        cityId: widget.cityId!,
-        query: q,
-        limit: 20,
-        refLat: _refLat,
-        refLon: _refLon,
-      );
-
-      // Show local results immediately (including one-letter and diacritics-folded matches).
-      if (!mounted) return;
-      if (offlineItems.isNotEmpty) {
-        setState(() => _results = offlineItems);
-      }
-
-      final onlineAllowed = !ApiConfig.useBackend || await isDeviceOnline();
-      if (onlineAllowed) {
-        final remoteItems = await ref.read(routeApiRepositoryProvider).searchStops(
-          cityId: widget.cityId!,
-          query: q,
-          limit: 20,
-          refLat: _refLat,
-          refLon: _refLon,
-        );
-        if (!mounted) return;
-        // Keep local fallback stable, then append backend-only suggestions.
-        final merged = <StopSearchItem>[];
-        final seen = <String>{};
-        for (final item in offlineItems) {
-          final key = '${item.stopId}|${item.name}|${item.lat}|${item.lon}';
-          if (seen.add(key)) merged.add(item);
-        }
-        for (final item in remoteItems) {
-          final key = '${item.stopId}|${item.name}|${item.lat}|${item.lon}';
-          if (seen.add(key)) merged.add(item);
-        }
-        setState(() {
-          if (merged.isNotEmpty) {
-            _results = merged.take(20).toList();
-          } else {
-            _results = const [];
-          }
-        });
-      } else if (offlineItems.isEmpty) {
-        setState(() => _results = const []);
-      }
-    } catch (_) {
-      if (!mounted) return;
-      // Keep any already-shown fallback results instead of clearing them on network/backend errors.
-      setState(() {
-        if (_results.isEmpty) _results = const [];
-      });
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  Future<void> _pickCurrentLocation() async {
-    final l10n = AppLocalizations.of(context)!;
-    final loc = await ref
-        .read(userLocationProvider.notifier)
-        .resolve(forceFresh: true);
-    if (!mounted) return;
-    if (!loc.hasFix) {
-      final failure = await localizedUserLocationFailure(l10n);
-      if (!mounted) return;
-      showUserMessage(
-        context,
-        AppUserMessage.custom(
-          failure.message,
-          severity: UserMessageSeverity.warning,
-          actionLabel: failure.showSettingsAction ? l10n.openSettings : null,
-        ),
-        onAction: failure.showSettingsAction ? openUserLocationSettings : null,
-      );
-      return;
-    }
-    final latStr = loc.lat!.toStringAsFixed(5);
-    final lonStr = loc.lon!.toStringAsFixed(5);
-    Navigator.of(context).pop(
-      _StationSelectionResult(
-        station: StopSearchItem(
-          stopId: 'gps:$latStr,$lonStr',
-          name: l10n.searchCurrentLocation,
-          lat: loc.lat!,
-          lon: loc.lon!,
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final userLoc = ref.watch(userLocationProvider);
-    final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      appBar: AppBar(
-        title: Text(widget.title),
-        actions: [
-          TextButton.icon(
-            onPressed: () => Navigator.of(context).pop(
-              const _StationSelectionResult(pickOnMap: true),
-            ),
-            icon: const Icon(Icons.map_outlined),
-            label: Text(l10n.searchSelectOnMap),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-          child: Column(
-            children: [
-              TextField(
-                controller: _queryCtrl,
-                autofocus: true,
-                decoration: InputDecoration(
-                  hintText: l10n.searchStationHint,
-                  prefixIcon: const Icon(Icons.search),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Expanded(
-                child: _loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : ListView.separated(
-                        keyboardDismissBehavior:
-                            ScrollViewKeyboardDismissBehavior.onDrag,
-                        itemCount:
-                            1 + _results.length + (_results.isEmpty ? 1 : 0),
-                        separatorBuilder: (_, __) =>
-                            const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                          if (index == 0) {
-                            return ListTile(
-                              leading: Icon(
-                                Icons.my_location,
-                                color: scheme.onSurface,
-                              ),
-                              title: Text(l10n.searchCurrentLocation),
-                              subtitle: Text(
-                                userLoc.hasFix
-                                    ? l10n.searchUsingGps
-                                    : (userLoc.resolveFinished
-                                        ? l10n.searchTapToRetryLocation
-                                        : l10n.searchGettingLocation),
-                                style: TextStyle(
-                                  color: userLoc.hasFix
-                                      ? scheme.onSurfaceVariant
-                                      : scheme.onSurfaceVariant.withValues(
-                                          alpha: 0.7,
-                                        ),
-                                ),
-                              ),
-                              onTap: _pickCurrentLocation,
-                            );
-                          }
-                          if (_results.isEmpty) {
-                            final q = _queryCtrl.text.trim();
-                            final msg = q.isEmpty
-                                ? l10n.searchNoNearbyStops
-                                : l10n.searchNoMatches;
-                            return ListTile(
-                              title: Text(
-                                msg,
-                                style: TextStyle(
-                                  color: scheme.onSurfaceVariant,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              enabled: false,
-                            );
-                          }
-                          final station = _results[index - 1];
-                          final distanceSubtitle = userLoc.hasFix
-                              ? formatDistanceAwayFromUser(
-                                  stopSuggestionDistanceMeters(
-                                    userLoc.lat!,
-                                    userLoc.lon!,
-                                    station.lat,
-                                    station.lon,
-                                  ),
-                                )
-                              : (userLoc.resolveFinished
-                                  ? l10n.searchEnableLocationForDistance
-                                  : l10n.searchWaitingForGps);
-                          return ListTile(
-                            leading:
-                                const Icon(Icons.location_on_outlined),
-                            title: Text(station.name),
-                            subtitle: Text(distanceSubtitle),
-                            onTap: () => Navigator.of(context).pop(
-                              _StationSelectionResult(station: station),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _StationSelectionResult {
-  const _StationSelectionResult({
-    this.station,
-    this.pickOnMap = false,
-  });
-
-  final StopSearchItem? station;
-  final bool pickOnMap;
-}

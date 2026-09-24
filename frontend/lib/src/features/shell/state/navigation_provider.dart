@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/branding/operator_branding.dart';
 import '../../routes/data/local_saved_routes_repository.dart';
 import '../../routes/domain/route_models.dart';
 
@@ -246,29 +247,35 @@ class SearchMapController extends StateNotifier<SearchMapState> {
     final first = legs.first;
     final last = legs.last;
     final now = DateTime.now();
+    final cityId = resolvedCityId(journey.cityId);
+    final names = journeyEndpointNames(journey.route);
+    final cityName = !isUnresolvedCityId(state.cityId) &&
+            state.cityId == cityId &&
+            state.cityName.isNotEmpty
+        ? state.cityName
+        : kBrasovCityName;
     final synthetic = RouteSearchRequest(
-      cityId: journey.cityId,
+      cityId: cityId,
       origin: '${first.fromLat},${first.fromLon}',
       destination: '${last.toLat},${last.toLon}',
       serviceDate: DateTime(now.year, now.month, now.day),
       serviceTime: now,
     );
-    final name = state.cityId == journey.cityId && state.cityName.isNotEmpty
-        ? state.cityName
-        : 'Saved trip';
     state = SearchMapState(
-      cityId: journey.cityId,
-      cityName: name,
-      results: const [],
-      visibleCount: 0,
+      cityId: cityId,
+      cityName: cityName,
+      results: [journey.route],
+      visibleCount: 1,
       offset: 0,
       limit: kRouteSearchPageSize,
-      total: 0,
+      total: 1,
       lastRequest: synthetic,
       selectedOption: journey.route,
       mode: SheetMode.details,
       openedFromSavedFavorite: true,
       pendingDetailsExtent: 0.5,
+      originLabel: names.from,
+      destinationLabel: names.to,
     );
   }
 
@@ -293,4 +300,14 @@ class SearchMapController extends StateNotifier<SearchMapState> {
       pendingDetailsExtent: null,
     );
   }
+}
+
+/// Search tab + map sheet for a saved journey. Does not go through nav-bar
+/// handlers, which would close the sheet when leaving Favorites.
+void openSavedJourneyOnMap(WidgetRef ref, SavedJourneyVm journey) {
+  ref.read(searchMapStateProvider.notifier).openFavoriteJourney(journey);
+  if (!ref.read(searchMapStateProvider).openedFromSavedFavorite) return;
+  ref.read(routeMapOverlaySuppressedProvider.notifier).state = false;
+  ref.read(showMapSheetProvider.notifier).state = true;
+  ref.read(selectedTabProvider.notifier).state = 0;
 }

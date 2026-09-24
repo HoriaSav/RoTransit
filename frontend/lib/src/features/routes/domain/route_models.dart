@@ -376,53 +376,6 @@ class StopTimetable {
   }
 }
 
-class SavedRouteValidation {
-  const SavedRouteValidation({
-    required this.isValid,
-    required this.reason,
-  });
-
-  final bool isValid;
-  final String reason;
-
-  factory SavedRouteValidation.fromJson(Map<String, dynamic> json) {
-    return SavedRouteValidation(
-      isValid: json['isValid'] as bool? ?? false,
-      reason: json['reason'] as String? ?? '',
-    );
-  }
-}
-
-class SavedRouteItem {
-  const SavedRouteItem({
-    required this.id,
-    required this.cityId,
-    required this.cityName,
-    required this.label,
-    required this.routeMetadata,
-    required this.createdAt,
-  });
-
-  final String id;
-  final String cityId;
-  final String cityName;
-  final String label;
-  final String routeMetadata;
-  final DateTime createdAt;
-
-  factory SavedRouteItem.fromJson(Map<String, dynamic> json) {
-    return SavedRouteItem(
-      id: json['id'] as String? ?? '',
-      cityId: json['cityId'] as String? ?? '',
-      cityName: json['cityName'] as String? ?? '',
-      label: json['label'] as String? ?? 'Saved journey',
-      routeMetadata: json['routeMetadata'] as String? ?? '{}',
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-          DateTime.fromMillisecondsSinceEpoch(0),
-    );
-  }
-}
-
 bool isGenericJourneyPlaceName(String name) {
   final normalized = name.trim().toLowerCase();
   return normalized.isEmpty ||
