@@ -382,6 +382,13 @@ abstract class AppLocalizations {
   /// **'No bus lines found.'**
   String get busNoLinesFound;
 
+  /// Hint for searching bus lines on the Timetable tab.
+  ///
+  /// In en, this message translates to:
+  /// **'Search line number or name'**
+  String get busSearchLineHint;
+
+
   /// No description provided for @busCouldNotLoadLines.
   ///
   /// In en, this message translates to:

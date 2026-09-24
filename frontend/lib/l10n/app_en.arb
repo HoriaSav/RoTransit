@@ -259,5 +259,6 @@
   "transitTrain": "Train",
   "transitMetro": "Metro",
   "transitWalk": "Walk",
-  "transitGeneric": "Transit"
+  "transitGeneric": "Transit",
+  "busSearchLineHint": "Search line number or name"
 }

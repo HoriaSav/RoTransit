@@ -72,6 +72,7 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
   /// changed on every parent rebuild (new closures break [MapOptions] equality).
   late final MapOptions _shellMapOptions;
   List<StopSearchItem> _companionStops = const [];
+  String? _selectedCompanionStopId;
   double _mapZoom = _fallbackZoom;
   static const _companionPinsMinZoom = 13.0;
 
@@ -102,6 +103,22 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
       setState(() => _companionStops = stops);
     } catch (_) {}
   }
+
+
+  Future<void> _openCompanionStopBoard(
+    BuildContext context,
+    StopSearchItem stop,
+  ) async {
+    setState(() => _selectedCompanionStopId = stop.stopId);
+    try {
+      await showStopBoardSheet(context, stop: stop);
+    } finally {
+      if (mounted) {
+        setState(() => _selectedCompanionStopId = null);
+      }
+    }
+  }
+
 
   @override
   void dispose() {
@@ -483,7 +500,7 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
     if (!showSheet || routeOverlaySuppressed) {
       final nearest = _nearestCompanionStop(latLng, maxMeters: 70);
       if (nearest != null) {
-        unawaited(showStopBoardSheet(context, stop: nearest));
+        unawaited(_openCompanionStopBoard(context, nearest));
         return;
       }
     }
@@ -514,7 +531,7 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
       zoom: math.max(_mapZoom, 15.5),
     );
     if (!mounted) return;
-    await showStopBoardSheet(context, stop: stop);
+    await _openCompanionStopBoard(context, stop);
   }
 
   void _syncMapRotation(double rotation) {
@@ -943,26 +960,15 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
                     for (final stop in _companionStops)
                       Marker(
                         point: LatLng(stop.lat, stop.lon),
-                        width: 18,
-                        height: 18,
+                        width: stop.stopId == _selectedCompanionStopId ? 40 : 32,
+                        height: stop.stopId == _selectedCompanionStopId ? 40 : 32,
                         alignment: Alignment.center,
                         child: GestureDetector(
                           onTap: () => unawaited(
-                            showStopBoardSheet(context, stop: stop),
+                            _openCompanionStopBoard(context, stop),
                           ),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: const Color(0xFF0A3E96),
-                              border: Border.all(color: Colors.white, width: 2),
-                              boxShadow: const [
-                                BoxShadow(
-                                  color: Color(0x33000000),
-                                  blurRadius: 2,
-                                  offset: Offset(0, 1),
-                                ),
-                              ],
-                            ),
+                          child: _CompanionStopMarker(
+                            selected: stop.stopId == _selectedCompanionStopId,
                           ),
                         ),
                       ),
@@ -1134,3 +1140,37 @@ class _MapTabState extends ConsumerState<MapTab> with TickerProviderStateMixin {
   }
 }
 
+
+class _CompanionStopMarker extends StatelessWidget {
+  const _CompanionStopMarker({required this.selected});
+
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = selected ? 36.0 : 28.0;
+    final iconSize = selected ? 20.0 : 16.0;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: selected ? const Color(0xFF0A3E96) : const Color(0xFF1565C0),
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: selected ? 2.5 : 2),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x40000000),
+            blurRadius: 3,
+            offset: Offset(0, 1),
+          ),
+        ],
+      ),
+      alignment: Alignment.center,
+      child: Icon(
+        Icons.directions_bus_rounded,
+        size: iconSize,
+        color: Colors.white,
+      ),
+    );
+  }
+}

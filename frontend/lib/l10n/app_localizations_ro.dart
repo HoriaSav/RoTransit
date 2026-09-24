@@ -177,6 +177,9 @@ class AppLocalizationsRo extends AppLocalizations {
   String get busNoLinesFound => 'Nu s-au găsit linii de autobuz.';
 
   @override
+  String get busSearchLineHint => 'Caută număr sau nume linie';
+
+  @override
   String get busCouldNotLoadLines => 'Nu s-au putut încărca liniile';
 
   @override

@@ -180,6 +180,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get busNoLinesFound => 'Keine Buslinien gefunden.';
 
   @override
+  String get busSearchLineHint => 'Linie nach Nummer oder Name suchen';
+
+  @override
   String get busCouldNotLoadLines => 'Buslinien konnten nicht geladen werden';
 
   @override

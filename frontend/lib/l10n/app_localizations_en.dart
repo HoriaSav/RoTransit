@@ -177,6 +177,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get busNoLinesFound => 'No bus lines found.';
 
   @override
+  String get busSearchLineHint => 'Search line number or name';
+
+  @override
   String get busCouldNotLoadLines => 'Could not load bus lines';
 
   @override

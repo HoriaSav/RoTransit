@@ -122,6 +122,7 @@ class _BusStopsScreen extends ConsumerStatefulWidget {
 
 class _BusStopsScreenState extends ConsumerState<_BusStopsScreen> {
   bool _isReverse = false;
+  String? _selectedStopId;
 
   String get _badgeLabel {
     final short = widget.shortName.trim();
@@ -141,12 +142,13 @@ class _BusStopsScreenState extends ConsumerState<_BusStopsScreen> {
     final extra = context.extraColors;
     final scheme = Theme.of(context).colorScheme;
     final directionId = _isReverse ? '1' : '0';
-    final stops = ref.watch(
+    final stopsAsync = ref.watch(
       routeStopsProvider((
         routeId: widget.routeId,
         directionId: directionId,
       )),
     );
+
     return Scaffold(
       backgroundColor: extra.tabBackground,
       body: Column(
@@ -157,7 +159,10 @@ class _BusStopsScreenState extends ConsumerState<_BusStopsScreen> {
             title: _headerTitle(l10n),
             trailing: IconButton(
               tooltip: l10n.busReverseDirection,
-              onPressed: () => setState(() => _isReverse = !_isReverse),
+              onPressed: () => setState(() {
+                _isReverse = !_isReverse;
+                _selectedStopId = null;
+              }),
               style: IconButton.styleFrom(
                 backgroundColor: extra.durationBadgeBackground,
               ),
@@ -168,11 +173,19 @@ class _BusStopsScreenState extends ConsumerState<_BusStopsScreen> {
             ),
           ),
           Expanded(
-            child: stops.when(
+            child: stopsAsync.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (_, __) =>
+                  Center(child: Text(l10n.busCouldNotLoadStops)),
               data: (items) {
                 if (items.isEmpty) {
                   return Center(child: Text(l10n.busNoStopsFound));
                 }
+                final selectedId = _selectedStopId ?? items.first.stopId;
+                final selected = items.firstWhere(
+                  (s) => s.stopId == selectedId,
+                  orElse: () => items.first,
+                );
                 final destination = items.last.name.trim();
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -191,42 +204,56 @@ class _BusStopsScreenState extends ConsumerState<_BusStopsScreen> {
                           ),
                         ),
                       ),
-                    Expanded(
-                      child: ListView.separated(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                        itemCount: items.length,
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
-                        itemBuilder: (context, index) {
-                          final stop = items[index];
-                          return _BusStopTile(
-                            name: stop.name,
-                            sequence: stop.stopSequence,
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => _BusTimetableScreen(
-                                  routeId: widget.routeId,
-                                  shortName: widget.shortName,
-                                  longName: widget.longName,
-                                  stopId: stop.stopId,
-                                  stopName: stop.name,
-                                  directionId: directionId,
-                                  destinationName: destination,
-                                  isReversed: _isReverse,
-                                  expectedHeadsign:
-                                      destination.isEmpty ? null : destination,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                      child: InputDecorator(
+                        decoration: InputDecoration(
+                          labelText: l10n.searchSelectStop,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            isExpanded: true,
+                            value: selected.stopId,
+                            items: [
+                              for (final stop in items)
+                                DropdownMenuItem(
+                                  value: stop.stopId,
+                                  child: Text(
+                                    '${stop.stopSequence}. ${stop.name}',
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
-                              ),
-                            ),
-                          );
-                        },
+                            ],
+                            onChanged: (id) {
+                              if (id == null) return;
+                              setState(() => _selectedStopId = id);
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: _EmbeddedLineTimetable(
+                        routeId: widget.routeId,
+                        shortName: widget.shortName,
+                        longName: widget.longName,
+                        stopId: selected.stopId,
+                        stopName: selected.name,
+                        directionId: directionId,
+                        destinationName: destination,
+                        isReversed: _isReverse,
                       ),
                     ),
                   ],
                 );
               },
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (_, __) =>
-                  Center(child: Text(l10n.busCouldNotLoadStops)),
             ),
           ),
         ],
@@ -235,98 +262,92 @@ class _BusStopsScreenState extends ConsumerState<_BusStopsScreen> {
   }
 }
 
-class _BusStopTile extends StatelessWidget {
-  const _BusStopTile({
-    required this.name,
-    required this.sequence,
-    required this.onTap,
+/// Week board for the selected stop on a line (Mon–Fri / Sat / Sun).
+class _EmbeddedLineTimetable extends ConsumerStatefulWidget {
+  const _EmbeddedLineTimetable({
+    required this.routeId,
+    required this.shortName,
+    required this.longName,
+    required this.stopId,
+    required this.stopName,
+    required this.directionId,
+    required this.destinationName,
+    required this.isReversed,
   });
 
-  final String name;
-  final int sequence;
-  final VoidCallback onTap;
+  final String routeId;
+  final String shortName;
+  final String longName;
+  final String stopId;
+  final String stopName;
+  final String directionId;
+  final String destinationName;
+  final bool isReversed;
+
+  @override
+  ConsumerState<_EmbeddedLineTimetable> createState() =>
+      _EmbeddedLineTimetableState();
+}
+
+class _EmbeddedLineTimetableState extends ConsumerState<_EmbeddedLineTimetable> {
+  late final DateTime _mondayDate;
+  late final DateTime _saturdayDate;
+  late final DateTime _sundayDate;
+
+  @override
+  void initState() {
+    super.initState();
+    final base = DateTime.now();
+    final date = DateTime(base.year, base.month, base.day);
+    _mondayDate = date.subtract(Duration(days: date.weekday - DateTime.monday));
+    _saturdayDate = _mondayDate.add(const Duration(days: 5));
+    _sundayDate = _mondayDate.add(const Duration(days: 6));
+  }
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final extra = context.extraColors;
-    final isDark = scheme.brightness == Brightness.dark;
-    final badge = accentBadgeColors(context);
-
-    return Material(
-      color: extra.recentTileBackground,
-      borderRadius: BorderRadius.circular(12),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: extra.recentTileBorder),
-            boxShadow: isDark
-                ? null
-                : const [
-                    BoxShadow(
-                      color: Color(0x0A0A3E96),
-                      blurRadius: 6,
-                      offset: Offset(0, 2),
-                    ),
-                  ],
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: badge.background,
-                  shape: BoxShape.circle,
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  '$sequence',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    color: badge.foreground,
-                    height: 1,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    height: 1.25,
-                    color: scheme.onSurface,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: extra.durationBadgeBackground,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                alignment: Alignment.center,
-                child: Icon(
-                  Icons.schedule_rounded,
-                  size: 20,
-                  color: accentIconColor(context),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    final l10n = AppLocalizations.of(context);
+    final monFriTimetable = ref.watch(
+      routeTimetableProvider((
+        routeId: widget.routeId,
+        stopId: widget.stopId,
+        serviceDate: _mondayDate,
+        directionId: widget.directionId,
+      )),
     );
+    final saturdayTimetable = ref.watch(
+      routeTimetableProvider((
+        routeId: widget.routeId,
+        stopId: widget.stopId,
+        serviceDate: _saturdayDate,
+        directionId: widget.directionId,
+      )),
+    );
+    final sundayTimetable = ref.watch(
+      routeTimetableProvider((
+        routeId: widget.routeId,
+        stopId: widget.stopId,
+        serviceDate: _sundayDate,
+        directionId: widget.directionId,
+      )),
+    );
+
+    return switch ((monFriTimetable, saturdayTimetable, sundayTimetable)) {
+      (
+        AsyncData(value: final mon),
+        AsyncData(value: final sat),
+        AsyncData(value: final sun),
+      ) =>
+        _WeekTimetableTable(
+          monFri: mon,
+          saturday: sat,
+          sunday: sun,
+          // Direction already scoped by directionId in the companion pack.
+          expectedHeadsign: null,
+        ),
+      (AsyncError(), _, _) || (_, AsyncError(), _) || (_, _, AsyncError()) =>
+        Center(child: Text(l10n.busCouldNotLoadTimetable)),
+      _ => const Center(child: CircularProgressIndicator()),
+    };
   }
 }

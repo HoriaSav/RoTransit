@@ -155,5 +155,6 @@
   "transitTrain": "Zug",
   "transitMetro": "U-Bahn",
   "transitWalk": "Zu Fuß",
-  "transitGeneric": "ÖPNV"
+  "transitGeneric": "ÖPNV",
+  "busSearchLineHint": "Linie nach Nummer oder Name suchen"
 }

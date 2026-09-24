@@ -171,7 +171,12 @@ class _WeekTimetableTable extends StatelessWidget {
 
   Map<String, List<String>> _groupByHour(List<StopTimetableEntry> departures) {
     final out = <String, List<String>>{};
-    for (final dep in departures.where(_matchesDirection)) {
+    var matched = departures.where(_matchesDirection).toList();
+    // If headsign filter would empty the board, show all scheduled times.
+    if (matched.isEmpty && departures.isNotEmpty) {
+      matched = departures;
+    }
+    for (final dep in matched) {
       final parts = dep.departureTime.split(':');
       if (parts.length < 2) continue;
       final hour = parts[0].padLeft(2, '0');

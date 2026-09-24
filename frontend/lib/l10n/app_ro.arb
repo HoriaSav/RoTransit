@@ -155,5 +155,6 @@
   "transitTrain": "Tren",
   "transitMetro": "Metrou",
   "transitWalk": "Mers pe jos",
-  "transitGeneric": "Transport"
+  "transitGeneric": "Transport",
+  "busSearchLineHint": "Caută număr sau nume linie"
 }

@@ -109,8 +109,23 @@ class _BusTabOperatorHeader extends ConsumerWidget {
   }
 }
 
-class _BusLinesView extends ConsumerWidget {
+class _BusLinesView extends ConsumerStatefulWidget {
   const _BusLinesView();
+
+  @override
+  ConsumerState<_BusLinesView> createState() => _BusLinesViewState();
+}
+
+class _BusLinesViewState extends ConsumerState<_BusLinesView> {
+  final _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
 
   bool _isTeLine(BusLine line) {
     final short = line.shortName.trim().toUpperCase();
@@ -158,12 +173,26 @@ class _BusLinesView extends ConsumerWidget {
   List<BusLine> _filterTe(List<BusLine> lines) =>
       lines.where(_isTeLine).toList();
 
+  List<BusLine> _applySearch(List<BusLine> lines) {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return lines;
+    return lines
+        .where((line) {
+          final short = line.shortName.toLowerCase();
+          final long = line.longName.toLowerCase();
+          final id = line.routeId.toLowerCase();
+          return short.contains(q) || long.contains(q) || id.contains(q);
+        })
+        .toList();
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final teEnabled = ref.watch(teTransportEnabledProvider);
     final packInstalled = ref.watch(cityOfflinePackInstalledProvider);
     final buses = ref.watch(busesProvider);
+    final scheme = Theme.of(context).colorScheme;
 
     return packInstalled.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -183,9 +212,10 @@ class _BusLinesView extends ConsumerWidget {
             if (items.isEmpty) {
               return Center(child: Text(l10n.busNoLinesFound));
             }
-            final urban = _sortedByNumber(_filterUrban(items));
-            final rural = _sortedByNumber(_filterRural(items));
-            final te = _sortedByNumber(_filterTe(items));
+            final filtered = _applySearch(items);
+            final urban = _sortedByNumber(_filterUrban(filtered));
+            final rural = _sortedByNumber(_filterRural(filtered));
+            final te = _sortedByNumber(_filterTe(filtered));
             final tabs = <Tab>[
               Tab(text: l10n.busTabUrban),
               Tab(text: l10n.busTabRural),
@@ -201,6 +231,39 @@ class _BusLinesView extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: (v) => setState(() => _query = v),
+                      decoration: InputDecoration(
+                        hintText: l10n.busSearchLineHint,
+                        prefixIcon: const Icon(Icons.search_rounded),
+                        suffixIcon: _query.isEmpty
+                            ? null
+                            : IconButton(
+                                tooltip: MaterialLocalizations.of(context)
+                                    .deleteButtonTooltip,
+                                onPressed: () {
+                                  _searchController.clear();
+                                  setState(() => _query = '');
+                                },
+                                icon: const Icon(Icons.clear_rounded),
+                              ),
+                        filled: true,
+                        fillColor: scheme.surfaceContainerHighest
+                            .withValues(alpha: 0.45),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                      ),
+                    ),
+                  ),
                   _BusCategoryTabBar(tabs: tabs),
                   Expanded(
                     child: TabBarView(
