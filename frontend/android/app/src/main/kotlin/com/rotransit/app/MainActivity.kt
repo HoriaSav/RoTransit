@@ -1,4 +1,4 @@
-package com.example.rotransit_frontend
+package com.rotransit.app
 
 import io.flutter.embedding.android.FlutterActivity
 
