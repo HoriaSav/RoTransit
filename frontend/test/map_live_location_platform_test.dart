@@ -36,9 +36,14 @@ void main() {
       'first tap asks for permission once, then the dot follows a 15 m '
       'position stream that stops in the background and on dispose',
       (tester) async {
+    // The one-time launch prompt was already used (and refused), so launch
+    // only checks the permission and leaves location alone.
+    SharedPreferences.setMockInitialValues(
+        {'map_launch_location_prompted': true});
     final geo = FakeGeolocator(grantOnRequest: true)..install(tester);
     await _pumpMap(tester);
-    expect(geo.calls, isEmpty, reason: 'no location access at startup');
+    expect(geo.calls, ['checkPermission'],
+        reason: 'launch only checks the permission; no prompt, no position');
     expect(geo.listenArgs, isEmpty);
 
     await tester.tap(find.byIcon(Icons.my_location_rounded));

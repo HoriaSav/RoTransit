@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -32,6 +34,12 @@ class FakeGeolocator {
 
   final bool grantOnRequest;
   int permission = _denied;
+
+  /// When set, getCurrentPosition waits for it (a slow first fix).
+  Completer<void>? holdPosition;
+
+  /// isLocationServiceEnabled answer (device location switch).
+  bool serviceEnabled = true;
   final calls = <String>[];
   final listenArgs = <Object?>[];
   int cancels = 0;
@@ -43,7 +51,7 @@ class FakeGeolocator {
       calls.add(call.method);
       switch (call.method) {
         case 'isLocationServiceEnabled':
-          return true;
+          return serviceEnabled;
         case 'checkPermission':
           return permission;
         case 'requestPermission':
@@ -52,6 +60,8 @@ class FakeGeolocator {
         case 'getLastKnownPosition':
           return null;
         case 'getCurrentPosition':
+          final hold = holdPosition;
+          if (hold != null) await hold.future;
           return fakePosition(45.6427, 25.5887);
       }
       return null;

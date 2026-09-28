@@ -102,9 +102,12 @@ void main() {
     return c;
   }
 
-  testWidgets('no live updates before the first center-on-me tap',
-      (tester) async {
-    final fake = _FakePositions();
+  testWidgets(
+      'launch prompt already used, permission not granted: no live updates '
+      'or dot before the first center-on-me tap', (tester) async {
+    SharedPreferences.setMockInitialValues(
+        {'map_launch_location_prompted': true});
+    final fake = _FakePositions(granted: false);
     await pumpMap(tester, fake);
     expect(fake.listens, 0);
     expect(_dot(tester), isNull);

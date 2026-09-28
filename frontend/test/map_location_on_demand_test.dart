@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rotransit/l10n/app_localizations.dart';
+import 'package:rotransit/src/core/location/live_position_source.dart';
 import 'package:rotransit/src/core/location/user_location_provider.dart';
 import 'package:rotransit/src/core/theme/app_theme.dart';
 import 'package:rotransit/src/features/map/presentation/map_tab.dart';
@@ -23,6 +24,15 @@ class _SpyLocation extends UserLocationNotifier {
   }
 }
 
+/// Permission not granted (never prompts), so launch does not locate.
+class _NotGranted implements LivePositionSource {
+  @override
+  Future<bool> canFollow() async => false;
+
+  @override
+  Stream<LivePosition> positions() => const Stream.empty();
+}
+
 const _geolocator = MethodChannel('flutter.baseflow.com/geolocator');
 
 Future<void> _settle(WidgetTester tester) async {
@@ -37,8 +47,14 @@ void main() {
   usePackTestEnv(prefix: 'rotransit_location_');
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  testWidgets('the map never asks for location until center-on-me is tapped',
-      (tester) async {
+  // Launch may locate (and asks once ever while undecided). Once that launch
+  // prompt was used and permission is not granted, the map must not touch
+  // location again until center-on-me is tapped.
+  testWidgets(
+      'launch prompt already used, permission not granted: no location '
+      'request until center-on-me is tapped', (tester) async {
+    SharedPreferences.setMockInitialValues(
+        {'map_launch_location_prompted': true});
     final platformCalls = <String>[];
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       _geolocator,
@@ -52,7 +68,10 @@ void main() {
 
     final spy = _SpyLocation();
     final c = ProviderContainer(
-      overrides: [userLocationProvider.overrideWith((ref) => spy)],
+      overrides: [
+        userLocationProvider.overrideWith((ref) => spy),
+        livePositionSourceProvider.overrideWithValue(_NotGranted()),
+      ],
     );
     addTearDown(c.dispose);
     await tester.pumpWidget(

@@ -8,6 +8,7 @@ import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import 'package:rotransit/l10n/app_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/map/tile_cache_backend.dart';
 import '../../../core/errors/app_user_message.dart';
@@ -28,6 +29,28 @@ part 'map_controls.dart';
 /// User GPS dot.
 const double _kUserLocationDotSize = 18;
 
+/// Stop pins show from this zoom. Brașov has 811 stops (median 58 m apart):
+/// at 14 a phone screen holds ~140 overlapping 32 px pins, at 15 at most ~50.
+const double kStopPinsMinZoom = 15;
+
+/// Area whose stops get pins: the visible bounds plus a quarter of their
+/// size on each side, so small pans don't rebuild the pin layer.
+@visibleForTesting
+LatLngBounds stopPinBounds(LatLngBounds visible) {
+  final dLat = (visible.north - visible.south) / 4;
+  final dLon = (visible.east - visible.west) / 4;
+  return LatLngBounds(
+    LatLng(math.max(-90, visible.south - dLat),
+        math.max(-180, visible.west - dLon)),
+    LatLng(
+        math.min(90, visible.north + dLat), math.min(180, visible.east + dLon)),
+  );
+}
+
+/// Pinch zoom moves this share of the fingers' zoom (log2 of the spread
+/// ratio since the zoom started), so pinches feel gentler.
+const double kPinchZoomDamping = 0.7;
+
 class MapTab extends ConsumerStatefulWidget {
   const MapTab({super.key});
 
@@ -42,6 +65,8 @@ class _MapTabState extends ConsumerState<MapTab>
       LatLng(kDefaultSearchRefLat, kDefaultSearchRefLon);
   static const _fallbackZoom = 11.0;
   static const _userZoom = 15.5;
+  static const _launchZoom = 16.0;
+  static const _launchPromptedKey = 'map_launch_location_prompted';
   final _store = const FMTCStore('rotransit_osm_cache');
   /// Stable instance — do not allocate a new [NetworkTileProvider] each build.
   final _networkTileProvider = NetworkTileProvider();
@@ -51,7 +76,7 @@ class _MapTabState extends ConsumerState<MapTab>
   LatLng? _userLocation;
   double _mapRotation = 0;
 
-  /// Live dot updates: on after the first successful "center on me", paused
+  /// Live dot updates: on after the first fix (launch or center-on-me), paused
   /// while the app is in the background or the map is not the visible screen
   /// (another tab or Settings on top; the map stays mounted underneath).
   bool _followingUser = false;
@@ -64,7 +89,15 @@ class _MapTabState extends ConsumerState<MapTab>
   List<StopSearchItem> _companionStops = const [];
   String? _selectedCompanionStopId;
   double _mapZoom = _fallbackZoom;
-  static const _companionPinsMinZoom = 13.0;
+
+  /// Stops inside these bounds get pins; null below [kStopPinsMinZoom].
+  LatLngBounds? _pinBounds;
+  bool _userMovedMap = false;
+
+  /// Pointers on the map, for the pinch focal point and spread.
+  final _pointers = <int, Offset>{};
+  double? _pinchStartZoom;
+  double? _pinchStartSpread;
 
   @override
   void initState() {
@@ -77,6 +110,7 @@ class _MapTabState extends ConsumerState<MapTab>
       initialZoom: _fallbackZoom,
       keepAlive: true,
       onPositionChanged: _onShellMapPositionChanged,
+      onMapEvent: _onShellMapEvent,
       onTap: _onShellMapTap,
       // flutter_map race checks pinchZoom BEFORE rotate. pinchZoomThreshold 1.0
       // made zoom feel delayed; ~0.35 made every pinch win before rotate.
@@ -94,7 +128,35 @@ class _MapTabState extends ConsumerState<MapTab>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_loadCompanionStops());
+      unawaited(_locateOnLaunch());
     });
+  }
+
+  /// Launch: center on the rider when location is allowed. The permission
+  /// prompt is shown at most once at launch (while still undecided); a
+  /// refusal keeps the default Brașov view silently, and center-on-me keeps
+  /// working as before.
+  Future<void> _locateOnLaunch() async {
+    try {
+      if (!await ref.read(livePositionSourceProvider).canFollow()) {
+        final prefs = await SharedPreferences.getInstance();
+        if (prefs.getBool(_launchPromptedKey) ?? false) return;
+        await prefs.setBool(_launchPromptedKey, true);
+      }
+    } catch (e) {
+      debugPrint('Launch location skipped: $e');
+      return;
+    }
+    if (!mounted) return;
+    final loc = await ref.read(userLocationProvider.notifier).resolve();
+    if (!mounted || !loc.hasFix) return;
+    final point = LatLng(loc.lat!, loc.lon!);
+    setState(() => _userLocation = point);
+    unawaited(_startFollowingUser());
+    // A slow fix must not yank the map away from where the rider panned.
+    if (!_userMovedMap) {
+      await _animateCameraTo(center: point, zoom: _launchZoom);
+    }
   }
 
   Future<void> _loadCompanionStops() async {
@@ -173,7 +235,7 @@ class _MapTabState extends ConsumerState<MapTab>
     }
   }
 
-  /// Location is resolved only on the "center on me" tap (no prompt at startup).
+  /// "Center on me" tap: resolves location (may prompt) and starts following.
   Future<void> _initUserLocation() async {
     final loc = await ref.read(userLocationProvider.notifier).resolve();
     if (!mounted || !loc.hasFix) return;
@@ -314,16 +376,61 @@ class _MapTabState extends ConsumerState<MapTab>
 
   void _onShellMapPositionChanged(MapCamera camera, bool hasGesture) {
     _syncMapRotation(camera.rotation);
-    final z = camera.zoom;
-    if ((z - _mapZoom).abs() >= 0.15) {
-      setState(() => _mapZoom = z);
+    _mapZoom = camera.zoom;
+    if (hasGesture) _userMovedMap = true;
+    final LatLngBounds? next;
+    if (camera.zoom < kStopPinsMinZoom) {
+      next = null;
+    } else if (_pinBounds?.containsBounds(camera.visibleBounds) ?? false) {
+      return;
     } else {
-      _mapZoom = z;
+      next = stopPinBounds(camera.visibleBounds);
     }
+    if (next != _pinBounds) setState(() => _pinBounds = next);
+  }
+
+  /// Damps pinch zoom: flutter_map zooms by log2 of the finger spread; this
+  /// re-applies [kPinchZoomDamping] of that around the fingers' focal point.
+  /// Rotation (no zoom change) and one-finger drags pass through untouched.
+  void _onShellMapEvent(MapEvent event) {
+    if (event is MapEventMoveStart &&
+        event.source == MapEventSource.multiFingerGestureStart) {
+      _pinchStartZoom = event.camera.zoom;
+      _pinchStartSpread = _pointerSpread();
+      return;
+    }
+    if (event is MapEventMoveEnd) {
+      _pinchStartZoom = _pinchStartSpread = null;
+      return;
+    }
+    final startZoom = _pinchStartZoom;
+    final startSpread = _pinchStartSpread;
+    final spread = _pointerSpread();
+    if (event is! MapEventMove ||
+        event.source != MapEventSource.onMultiFinger ||
+        event.camera.zoom == event.oldCamera.zoom ||
+        startZoom == null ||
+        startSpread == null ||
+        spread == null) {
+      return;
+    }
+    final zoom = event.camera.clampZoom(startZoom +
+        kPinchZoomDamping * math.log(spread / startSpread) / math.ln2);
+    if ((zoom - event.camera.zoom).abs() < 1e-3) return;
+    final focal = _pointers.values.reduce((a, b) => a + b) / 2;
+    _mapController.move(event.camera.focusedZoomCenter(focal, zoom), zoom);
+  }
+
+  /// Distance between the two fingers, or null without exactly two.
+  double? _pointerSpread() {
+    if (_pointers.length != 2) return null;
+    final d = (_pointers.values.first - _pointers.values.last).distance;
+    return d > 0 ? d : null;
   }
 
   void _onShellMapTap(TapPosition tapPosition, LatLng latLng) {
     if (!isUsableLatLon(latLng.latitude, latLng.longitude)) return;
+    if (_pinBounds == null) return; // pins hidden: nothing to tap
     // Companion: tap near a stop opens the schedule board.
     final nearest = _nearestCompanionStop(latLng, maxMeters: 70);
     if (nearest != null) {
@@ -413,11 +520,11 @@ class _MapTabState extends ConsumerState<MapTab>
                 userAgentPackageName: 'com.rotransit.app',
                 tileProvider: _fmtcTileProvider ?? _networkTileProvider,
               ),
-              if (_mapZoom >= _companionPinsMinZoom &&
-                  _companionStops.isNotEmpty)
+              if (_pinBounds case final pins?)
                 MarkerLayer(
                   markers: [
-                    for (final stop in _companionStops)
+                    for (final stop in _companionStops
+                        .where((s) => pins.contains(LatLng(s.lat, s.lon))))
                       Marker(
                         point: LatLng(stop.lat, stop.lon),
                         width: stop.stopId == _selectedCompanionStopId ? 40 : 32,
@@ -463,6 +570,17 @@ class _MapTabState extends ConsumerState<MapTab>
                     ),
                   ],
                 ),
+              // Tracks fingers for the pinch damping; translucent, so taps
+              // and gestures still reach the pins and the map.
+              Positioned.fill(
+                child: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerDown: (e) => _pointers[e.pointer] = e.localPosition,
+                  onPointerMove: (e) => _pointers[e.pointer] = e.localPosition,
+                  onPointerUp: (e) => _pointers.remove(e.pointer),
+                  onPointerCancel: (e) => _pointers.remove(e.pointer),
+                ),
+              ),
             ],
           ),
           Consumer(
