@@ -57,13 +57,13 @@ try {
 
     $gtfsZip = Join-Path $repoRoot "otp\gtfs\ro-ratbv.zip"
     if (-not (Test-Path $gtfsZip)) {
-        throw "Missing GTFS feed: otp/gtfs/ro-ratbv.zip (see doc/otp-setup.md)"
+        throw "Missing GTFS feed: otp/gtfs/ro-ratbv.zip (see README.md, Run it)"
     }
     Write-Host '[ok] GTFS feed present: otp/gtfs/ro-ratbv.zip'
 
     $osmDir = Join-Path $repoRoot "otp\osm"
     if (-not (Test-Path $osmDir) -or -not (Get-ChildItem $osmDir -Filter *.pbf -ErrorAction SilentlyContinue)) {
-        Write-Host '[warn] No OSM .pbf found under otp/osm/ - OTP graph build may fail until you add one (see doc/otp-setup.md)'
+        Write-Host '[warn] No OSM .pbf found under otp/osm/ - OTP graph build may fail until you add one (see README.md, Run it)'
     } else {
         Write-Host '[ok] OSM extract present under otp/osm/'
     }
