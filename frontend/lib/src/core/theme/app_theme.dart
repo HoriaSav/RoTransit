@@ -12,22 +12,6 @@ class AppTheme {
   static const _darkOnSurface = Color(0xFFE8EDF5);
   static const _darkOnSurfaceVariant = Color(0xFFB8C4D6);
 
-  static const authPrimaryBlue = Color(0xFF0A4FB8);
-  static const authDarkButton = Color(0xFF121418);
-  static const authScreenBackground = Color(0xFFF7F8F4);
-  static const authCardBackground = Color(0xFFFFFFFF);
-  static const authMutedText = Color(0xFF6A6E79);
-  static const authBodyText = Color(0xFF1A1E27);
-  static const authLegalText = Color(0xFF273043);
-  static const authTransportText = Color(0xFF8E939B);
-
-  static const BorderRadius authCardRadius =
-      BorderRadius.all(Radius.circular(36));
-  static const BorderRadius authPillRadius =
-      BorderRadius.all(Radius.circular(999));
-  static const BorderRadius authLogoRadius =
-      BorderRadius.all(Radius.circular(24));
-
   static ThemeData get lightTheme => _buildTheme(
         brightness: Brightness.light,
         extra: AppExtraColors.light,

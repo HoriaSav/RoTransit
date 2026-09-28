@@ -57,3 +57,10 @@ frontend/.idea/
 
 # Private CS learning notes (Teacher bot — not for git)
 .learning/
+
+# Local source backups and stray Maven logs
+*.tgz
+backend-*.log
+
+# Raw companion pack (only the .gz is shipped)
+frontend/assets/data/*.sqlite

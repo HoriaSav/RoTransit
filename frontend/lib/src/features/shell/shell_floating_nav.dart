@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:rotransit_frontend/l10n/app_localizations.dart';
+import 'package:rotransit/l10n/app_localizations.dart';
 
 import '../../core/theme/accent_badge_style.dart';
 import '../../core/theme/app_extra_colors.dart';
@@ -19,7 +19,7 @@ class ShellFloatingNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
     final scheme = Theme.of(context).colorScheme;
     final extra = context.extraColors;
     final isLight = scheme.brightness == Brightness.light;
@@ -40,9 +40,9 @@ class ShellFloatingNavBar extends StatelessWidget {
           children: [
             _Slot(
               selected: selectedIndex == 0,
-              icon: Icons.search_outlined,
-              selectedIcon: Icons.search,
-              label: l10n.navSearch,
+              icon: Icons.map_outlined,
+              selectedIcon: Icons.map_rounded,
+              label: l10n.navMap,
               onTap: () => onDestinationSelected(0),
             ),
             _Slot(
@@ -54,17 +54,10 @@ class ShellFloatingNavBar extends StatelessWidget {
             ),
             _Slot(
               selected: selectedIndex == 2,
-              icon: Icons.favorite_border_rounded,
-              selectedIcon: Icons.favorite_rounded,
+              icon: Icons.star_border_rounded,
+              selectedIcon: Icons.star_rounded,
               label: l10n.navFavorites,
               onTap: () => onDestinationSelected(2),
-            ),
-            _Slot(
-              selected: selectedIndex == 3,
-              icon: Icons.settings_outlined,
-              selectedIcon: Icons.settings,
-              label: l10n.navSettings,
-              onTap: () => onDestinationSelected(3),
             ),
           ],
         ),

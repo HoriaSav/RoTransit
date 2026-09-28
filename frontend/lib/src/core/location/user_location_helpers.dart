@@ -3,7 +3,7 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:geolocator/geolocator.dart';
-import 'package:rotransit_frontend/l10n/app_localizations.dart';
+import 'package:rotransit/l10n/app_localizations.dart';
 
 /// Fallback when GPS is denied, off, or unavailable (Brașov area; map framing only).
 const double kDefaultSearchRefLat = 45.6579;
@@ -17,6 +17,15 @@ const Duration _streamFixTimeLimit = Duration(seconds: 12);
 /// Reject fixes worse than this (meters) — coarse / stale readings mislead distance labels.
 const double _maxAcceptableAccuracyM = 1200;
 
+/// True when [lat]/[lon] can be sent to the router or drawn on the map.
+bool isUsableLatLon(double lat, double lon) {
+  return lat.isFinite &&
+      lon.isFinite &&
+      lat.abs() <= 90 &&
+      lon.abs() <= 180 &&
+      !(lat == 0 && lon == 0);
+}
+
 /// Whether [position] is recent enough to use without waiting for a new GPS fix.
 bool isFreshUserPosition(
   Position position, {
@@ -26,8 +35,9 @@ bool isFreshUserPosition(
 }
 
 bool isReliableUserPosition(Position position) {
+  if (!isUsableLatLon(position.latitude, position.longitude)) return false;
   final accuracy = position.accuracy;
-  if (accuracy.isNaN || accuracy < 0) return true;
+  if (!accuracy.isFinite || accuracy < 0) return true;
   return accuracy <= _maxAcceptableAccuracyM;
 }
 
@@ -113,6 +123,10 @@ Future<({double lat, double lon, double? accuracyM})?> tryGetCurrentUserLatLon({
     current = await _firstReliableStreamFix(_streamFixTimeLimit);
     if (current != null) return _toFix(current);
 
+    // Fresh GPS can time out indoors; a last-known fix is still a valid origin.
+    final lastKnown = await _recentLastKnownPosition();
+    if (lastKnown != null) return _toFix(lastKnown);
+
     return null;
   } catch (_) {
     return null;
@@ -146,21 +160,17 @@ Future<Position?> _tryCurrentPosition({
 }
 
 Future<Position?> _firstReliableStreamFix(Duration timeout) async {
-  final stream = Geolocator.getPositionStream(
-    locationSettings: _platformLocationSettings(
-      accuracy: LocationAccuracy.high,
-    ),
-  );
   try {
-  await for (final position in stream.timeout(timeout)) {
-      if (isReliableUserPosition(position)) return position;
-    }
+    return await Geolocator.getPositionStream(
+      locationSettings: _platformLocationSettings(
+        accuracy: LocationAccuracy.high,
+      ),
+    ).where(isReliableUserPosition).timeout(timeout).first;
   } on TimeoutException {
     return null;
   } catch (_) {
     return null;
   }
-  return null;
 }
 
 LocationSettings _platformLocationSettings({

@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:rotransit_frontend/l10n/app_localizations.dart';
+import 'package:rotransit/l10n/app_localizations.dart';
 
 import '../errors/app_user_message.dart';
 import 'app_snackbar.dart';

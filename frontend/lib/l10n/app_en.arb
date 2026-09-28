@@ -3,14 +3,12 @@
 
   "appTitle": "RoTransit",
 
-  "navSearch": "Search",
-  "navBus": "Bus",
+  "navMap": "Map",
+  "navBus": "Timetable",
   "navFavorites": "Favorites",
-  "navSettings": "Settings",
 
   "settingsTitle": "Settings",
   "city": "City",
-  "notifications": "Notifications",
   "darkMode": "Dark mode",
   "teTransport": "TE transport",
   "teTransportSubtitle": "Student transport",
@@ -18,74 +16,14 @@
   "languageEnglish": "English",
   "languageRomanian": "Romanian",
   "languageGerman": "German",
+  "settingsDataAsOf": "Brașov data as of",
+  "settingsFaresTitle": "Fares & tickets",
+  "settingsFaresSubtitle": "Urban vs metropolitan · where to buy",
+  "faresSheetTitle": "RATBV fares (static guide)",
+  "faresSheetBody": "Urban (inside Brașov): about 5 RON per ride on the standard ticket (confirm on ratbv.ro — prices change).\n\nMetropolitan / zone tickets: higher fares for trips into nearby communes (roughly 7–12 RON depending on zone in the GTFS fare table).\n\nBuy tickets: 24pay app, RATBV ticket machines/kiosks, and other channels listed on the operator site. This app does not sell tickets.",
 
-  "offlineTimetables": "Offline timetables",
-  "offlineOnDevicePack": "On-device pack: {version}",
-  "@offlineOnDevicePack": {
-    "placeholders": { "version": { "type": "String" } }
-  },
-  "offlineServerMeta": "Server meta (for updates): {meta}",
-  "@offlineServerMeta": {
-    "placeholders": { "meta": { "type": "String" } }
-  },
-  "offlineUpdatingBackground": "Downloading timetables…",
-  "offlineDownloadProgressPercent": "Downloading… {percent}%",
-  "@offlineDownloadProgressPercent": {
-    "placeholders": { "percent": { "type": "int" } }
-  },
-  "offlineDownloadEtaMinutes": "~{count} min left",
-  "@offlineDownloadEtaMinutes": {
-    "placeholders": { "count": { "type": "int" } }
-  },
-  "offlineDownloadEtaSeconds": "~{count} sec left",
-  "@offlineDownloadEtaSeconds": {
-    "placeholders": { "count": { "type": "int" } }
-  },
-  "offlineDownloadReceived": "Downloaded {size}…",
-  "@offlineDownloadReceived": {
-    "placeholders": { "size": { "type": "String" } }
-  },
-  "offlineDownloadSaving": "Saving timetables on device…",
-  "offlineDownloadReceivedWithElapsed": "Downloaded {size} · {seconds} sec",
-  "@offlineDownloadReceivedWithElapsed": {
-    "placeholders": {
-      "size": { "type": "String" },
-      "seconds": { "type": "int" }
-    }
-  },
-  "offlinePackNotAvailablePreview": "Not available in preview mode",
-  "offlinePackChooseCityFirst": "Choose a city first",
-  "offlinePackNoneYet": "Not downloaded",
-  "offlinePackAvailableOnDevice": "Available on device",
-  "offlinePackDownloaded": "Downloaded {date}",
-  "@offlinePackDownloaded": {
-    "placeholders": { "date": { "type": "String" } }
-  },
-  "offlinePackDownloadedWithWeek": "Downloaded {date} · week {week}",
-  "@offlinePackDownloadedWithWeek": {
-    "placeholders": {
-      "date": { "type": "String" },
-      "week": { "type": "String" }
-    }
-  },
-  "offlineMetaEndpointMissing": "Not available — deploy GET /api/buses/offline-pack-meta on the server",
-  "timetableDownloadSourceBus": "Bus timetables",
-  "timetableDownloadConfirmTitle": "Download timetables?",
-  "timetableDownloadConfirmMessage": "Download offline bus timetables for {cityName}? This may use mobile data.",
-  "@timetableDownloadConfirmMessage": {
-    "placeholders": { "cityName": { "type": "String" } }
-  },
-  "timetableDownloadAction": "Download",
-  "timetableDownloadSuccess": "Timetables downloaded for {cityName}",
-  "@timetableDownloadSuccess": {
-    "placeholders": { "cityName": { "type": "String" } }
-  },
-  "timetableDownloadFailed": "Could not download timetables",
-  "timetableDownloadOffline": "Connect to the internet to download timetables",
-  "timetableDownloadAlreadyUpToDate": "Timetables are already downloaded and up to date",
-
-  "busTabTimetablesNotDownloadedTitle": "Timetables not downloaded",
-  "busTabTimetablesNotDownloadedBody": "Download bus timetables for this city in Settings to browse lines and schedules.",
+  "busTabTimetablesNotDownloadedTitle": "Timetables not available",
+  "busTabTimetablesNotDownloadedBody": "Timetables are available only for Brașov for now. Choose Brașov in Settings.",
   "busTabOpenSettings": "Go to Settings",
   "busTabUrban": "Urban",
   "busTabRural": "Rural",
@@ -108,27 +46,13 @@
   "@busTowards": {
     "placeholders": { "destination": { "type": "String" } }
   },
-  "busFrom": "From: {destination}",
-  "@busFrom": {
-    "placeholders": { "destination": { "type": "String" } }
-  },
-  "busLineTitle": "Bus {short} · {long}",
-  "@busLineTitle": {
-    "placeholders": {
-      "short": { "type": "String" },
-      "long": { "type": "String" }
-    }
-  },
+  "favoriteLineAdd": "Favorite line",
   "timetableHour": "Hour",
   "timetableWeekdays": "Mon-Fri",
   "timetableSaturday": "Sat",
   "timetableSunday": "Sun",
 
   "version": "Version",
-  "privacyPolicy": "Privacy policy",
-  "termsOfUse": "Terms of use",
-  "help": "Help",
-  "contactUs": "Contact us",
 
   "countryLabel": "Country: {country}",
   "@countryLabel": {
@@ -139,29 +63,15 @@
     "placeholders": { "name": { "type": "String" } }
   },
   "cityUnavailable": "Unavailable",
-  "previewMode": "Preview mode",
 
   "pressBackAgainToExit": "Press back again quickly to exit the app",
 
-  "commonCancel": "Cancel",
-  "commonDelete": "Delete",
-  "commonBack": "Back",
   "openSettings": "Settings",
+  "linkOpenFailed": "Could not open the link",
 
-  "errorCompleteSearchFields": "Please fill in From, To, date, and time.",
-  "errorSelectStationsFromPicker": "Select both stations from the list or map.",
-  "errorCityContextUnavailable": "Could not load your city. Try again later.",
-  "errorSearchRequiresInternet": "Route search needs an internet connection.",
-  "errorNoRoutesFound": "No routes found for this trip.",
   "errorServerUnreachable": "Cannot reach the server. Check your connection and try again.",
   "errorServerTimeout": "The server took too long to respond. Try again.",
-  "errorRoutingUnavailable": "Trip planning is temporarily unavailable.",
-  "errorInvalidSearchParams": "Check your stations, date, and time.",
-  "errorCityNotFound": "This city is not available yet.",
   "errorUnexpectedError": "Something went wrong. Please try again.",
-  "errorRouteShapeSimplified": "Could not load full route details. Showing a simplified view.",
-  "errorLoadMoreRoutesFailed": "Could not load more routes. Try again.",
-  "successAddedToFavorites": "Added to favorites",
 
   "locationServicesOff": "Location services are turned off on this device.",
   "locationPermissionBlocked": "Location permission is blocked. Open Settings to allow precise location.",
@@ -169,96 +79,46 @@
   "locationPreciseRequired": "Enable Precise Location in Settings for accurate stop distances.",
   "locationGpsFailed": "Could not get a reliable GPS fix. Try outdoors, enable precise location, or use Select on map.",
 
-  "searchFrom": "From",
-  "searchTo": "To",
-  "searchDate": "Date",
-  "searchTime": "Time",
-  "searchButton": "Search",
-  "searchRecent": "Recent",
-  "searchNoRecent": "No recent searches yet.",
-  "searchCouldNotLoadRecent": "Could not load recent searches.",
-  "searchSelectDate": "Select date",
-  "searchSelectTime": "Select time",
-  "searchSwapTooltip": "Swap From and To",
-  "searchDeparture": "Departure",
-  "searchDestination": "Destination",
   "searchSelectStop": "Select stop",
-  "searchStationHint": "Search station",
-  "searchCurrentLocation": "Current location",
-  "searchSelectOnMap": "Select on map",
-  "searchNoNearbyStops": "No nearby stops. Search above or use Select on map.",
-  "searchNoMatches": "No matches for your search. Try another query or Select on map.",
-  "searchEnableLocationForDistance": "Enable location for distance",
-  "searchWaitingForGps": "Waiting for GPS...",
-  "searchUsingGps": "Using your GPS position",
-  "searchTapToRetryLocation": "Tap to retry — enable precise location",
-  "searchGettingLocation": "Getting your location...",
-  "origin": "Origin",
-  "destination": "Destination",
 
-  "favoritesSavedJourneys": "Saved journeys",
-  "favoritesEmptyTitle": "No saved journeys yet",
-  "favoritesEmptyBody": "Search for a route, open its details, and tap Add to favorites.",
-  "favoritesDeleteTitle": "Delete trip?",
-  "favoritesDeleteBody": "Remove this journey from your favorites?",
-  "favoritesCouldNotLoad": "Could not load saved journeys",
-  "favoritesDirect": "Direct",
-  "favoritesTransfers": "{count} transfers",
-  "@favoritesTransfers": {
-    "placeholders": { "count": { "type": "int" } }
-  },
-  "favoritesOneTransfer": "1 transfer",
-  "savedJourneyLabel": "Saved journey",
+  "favoritesCouldNotLoad": "Could not load favorites",
+  "favoritesCouldNotSave": "Could not save favorite",
+  "favoritesStopsTitle": "Stops",
+  "favoritesStopsEmpty": "No favorite stops yet. Open a stop on the map and tap the star.",
+  "favoritesLinesTitle": "Lines",
+  "favoritesLinesEmpty": "No favorite lines yet. In Timetable, tap the star next to a line.",
+  "favoriteStopAdd": "Favorite stop",
+  "favoriteRemove": "Remove favorite",
 
-  "mapWalkingRoute": "Walking route",
   "mapRotateNorth": "Rotate map to north",
-  "mapSearchRoutesHint": "Search routes to see options here.",
-  "mapLoading": "Loading…",
-  "mapLoadMoreTripsWithRemaining": "Load {count} more trips ({remaining} left)",
-  "@mapLoadMoreTripsWithRemaining": {
-    "placeholders": {
-      "count": { "type": "int" },
-      "remaining": { "type": "int" }
-    }
+  "mapSearchStationsHint": "Search Brașov stations",
+  "mapScheduleNotLive": "Schedule times · not live GPS",
+  "stopBoardWindow": "Next {minutes} min",
+  "@stopBoardWindow": {
+    "placeholders": { "minutes": { "type": "int" } }
   },
-  "mapLoadMoreTrips": "Load {count} more {tripWord}",
-  "@mapLoadMoreTrips": {
-    "placeholders": {
-      "count": { "type": "int" },
-      "tripWord": { "type": "String" }
-    }
+  "stopBoardCouldNotLoad": "Could not load schedule",
+  "stopBoardEmpty": "No departures in the next {minutes} minutes",
+  "@stopBoardEmpty": {
+    "placeholders": { "minutes": { "type": "int" } }
   },
-  "mapLoadNextTrips": "Load next {count} trips",
-  "@mapLoadNextTrips": {
-    "placeholders": { "count": { "type": "int" } }
+  "stopBoardShowMore": "Show next {minutes} minutes",
+  "@stopBoardShowMore": {
+    "placeholders": { "minutes": { "type": "int" } }
   },
-  "mapTripSingular": "trip",
-  "mapTripPlural": "trips",
-  "mapNoTransfers": "No transfers",
-  "mapTransfers": "{count} transfers",
-  "@mapTransfers": {
-    "placeholders": { "count": { "type": "int" } }
+  "stopBoardUntil": "Until {time}",
+  "@stopBoardUntil": {
+    "placeholders": { "time": { "type": "String" } }
   },
-  "mapOneTransfer": "1 transfer",
-  "mapAddToFavorites": "Add to favorites",
-  "mapSteps": "Steps",
-  "mapPriceLei": "{price} lei",
-  "@mapPriceLei": {
-    "placeholders": { "price": { "type": "int" } }
+  "stopBoardEmptyUntil": "No departures until {time}",
+  "@stopBoardEmptyUntil": {
+    "placeholders": { "time": { "type": "String" } }
   },
-  "mapTransfersAndPrice": "{transfers} • {price}",
-  "@mapTransfersAndPrice": {
-    "placeholders": {
-      "transfers": { "type": "String" },
-      "price": { "type": "String" }
-    }
+  "stopBoardFeedEnded": "Timetable data ended on {date}. Update the app to see departures.",
+  "@stopBoardFeedEnded": {
+    "placeholders": { "date": { "type": "String" } }
   },
+  "stopOpenInGoogleMaps": "Open in Google Maps",
 
-  "transitBus": "Bus",
-  "transitTrolleybus": "Trolleybus",
-  "transitTram": "Tram",
-  "transitTrain": "Train",
-  "transitMetro": "Metro",
-  "transitWalk": "Walk",
-  "transitGeneric": "Transit"
+  "busSearchLineHint": "Search line number or name"
 }
