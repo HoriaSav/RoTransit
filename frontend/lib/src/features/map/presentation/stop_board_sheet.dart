@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:rotransit/l10n/app_localizations.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../../core/state/clock_provider.dart';
 import '../../../core/theme/accent_badge_style.dart';
 import '../../../core/errors/app_user_message.dart';
 import '../../../core/theme/app_extra_colors.dart';
@@ -33,7 +34,7 @@ class StopBoardSheet extends ConsumerStatefulWidget {
 
   final StopSearchItem stop;
 
-  /// Current time; tests pass a fixed clock.
+  /// Current time; tests pass a fixed clock. Defaults to [clockProvider].
   @visibleForTesting
   final DateTime Function()? clock;
 
@@ -65,7 +66,10 @@ class _StopBoardSheetState extends ConsumerState<StopBoardSheet>
   late Future<bool> _favFuture;
   bool _favBusy = false;
 
-  DateTime _now() => (widget.clock ?? DateTime.now)();
+  DateTime _now() {
+    final DateTime Function() clock = widget.clock ?? ref.read(clockProvider);
+    return clock();
+  }
 
   @override
   void initState() {
@@ -134,9 +138,7 @@ class _StopBoardSheetState extends ConsumerState<StopBoardSheet>
   /// an update), else null.
   Future<DateTime?> _feedEndIfPast() async {
     try {
-      final range = await ref.read(companionCatalogProvider).feedDateRange();
-      final day = DateTime(_from.year, _from.month, _from.day);
-      return range != null && day.isAfter(range.end) ? range.end : null;
+      return await feedEndedOn(ref.read(companionCatalogProvider), _from);
     } catch (e) {
       debugPrint('Stop board: feed date range unavailable: $e');
       return null;

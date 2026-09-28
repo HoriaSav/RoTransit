@@ -77,6 +77,14 @@ final companionCatalogProvider = Provider<CompanionCatalog>((ref) {
   return CompanionCatalog.instance;
 });
 
+/// The pack's last service date when [now]'s day is after it (the
+/// timetables ended and the app needs an update), else null.
+Future<DateTime?> feedEndedOn(CompanionCatalog catalog, DateTime now) async {
+  final range = await catalog.feedDateRange();
+  final today = DateTime(now.year, now.month, now.day);
+  return range != null && today.isAfter(range.end) ? range.end : null;
+}
+
 /// Read-only Brașov catalog shipped in the app binary (no RoTransit server).
 class CompanionCatalog {
   CompanionCatalog._();

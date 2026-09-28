@@ -4,12 +4,14 @@ import 'package:rotransit/l10n/app_localizations.dart';
 
 import '../../../core/branding/operator_branding.dart';
 import '../../../core/errors/app_user_message.dart';
+import '../../../core/state/clock_provider.dart';
 import '../../../core/state/transport_settings_provider.dart';
 import '../../../core/theme/accent_badge_style.dart';
 import '../../../core/theme/app_extra_colors.dart';
 import '../../../core/ui/user_feedback.dart';
 import '../../routes/domain/route_models.dart';
 import '../../favorites/data/favorite_stops_repository.dart';
+import '../../map/data/companion_catalog.dart';
 import '../../shell/shell_layout.dart';
 import '../../shell/state/navigation_provider.dart';
 import '../../shell/state/bus_line_open_provider.dart';
@@ -269,6 +271,7 @@ class _BusLinesViewState extends ConsumerState<_BusLinesView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  const _FeedEndedNotice(),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                     child: TextField(
@@ -315,6 +318,98 @@ class _BusLinesViewState extends ConsumerState<_BusLinesView> {
           },
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (_, __) => Center(child: Text(l10n.busCouldNotLoadLines)),
+        );
+      },
+    );
+  }
+}
+
+/// "Timetable data ended on …" above the lines once the bundled pack's last
+/// service date is past (same check as the stop board and Settings).
+class _FeedEndedNotice extends ConsumerStatefulWidget {
+  const _FeedEndedNotice();
+
+  @override
+  ConsumerState<_FeedEndedNotice> createState() => _FeedEndedNoticeState();
+}
+
+class _FeedEndedNoticeState extends ConsumerState<_FeedEndedNotice>
+    with WidgetsBindingObserver {
+  // Cached so rebuilds (search typing, tab switches) don't re-query. The tab
+  // stays mounted for the life of the process, so a resume on a later day
+  // checks again.
+  late Future<DateTime?> _ended = _load();
+  DateTime? _checkedDay;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final now = ref.read(clockProvider)();
+    if (DateTime(now.year, now.month, now.day) == _checkedDay) return;
+    // Block body: an arrow would hand setState the Future.
+    setState(() {
+      _ended = _load();
+    });
+  }
+
+  Future<DateTime?> _load() async {
+    final now = ref.read(clockProvider)();
+    _checkedDay = DateTime(now.year, now.month, now.day);
+    try {
+      return await feedEndedOn(ref.read(companionCatalogProvider), now);
+    } catch (e) {
+      debugPrint('Timetable: feed date range unavailable: $e');
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<DateTime?>(
+      future: _ended,
+      builder: (context, snap) {
+        final ended = snap.data;
+        if (ended == null) return const SizedBox.shrink();
+        final l10n = AppLocalizations.of(context);
+        final scheme = Theme.of(context).colorScheme;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: scheme.errorContainer,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.warning_amber_rounded,
+                    color: scheme.onErrorContainer,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      l10n.stopBoardFeedEnded(CompanionCatalog.isoDate(ended)),
+                      style: TextStyle(color: scheme.onErrorContainer),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         );
       },
     );

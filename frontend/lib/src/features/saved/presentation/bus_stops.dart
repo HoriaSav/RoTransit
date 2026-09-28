@@ -318,7 +318,7 @@ class _EmbeddedLineTimetableState extends ConsumerState<_EmbeddedLineTimetable> 
     super.initState();
     // Only the weekday matters: the tabs show the regular Mon–Fri / Sat /
     // Sun pattern, not this week's holidays.
-    final now = DateTime.now();
+    final now = ref.read(clockProvider)();
     final monday = now.day - (now.weekday - DateTime.monday);
     _mondayDate = DateTime(now.year, now.month, monday);
     _saturdayDate = DateTime(now.year, now.month, monday + 5);

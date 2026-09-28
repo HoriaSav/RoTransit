@@ -8,6 +8,7 @@ import '../../../core/theme/accent_badge_style.dart';
 import '../../../core/theme/app_extra_colors.dart';
 import '../../../core/errors/app_user_message.dart';
 import '../../../core/ui/user_feedback.dart';
+import '../../../core/state/clock_provider.dart';
 import '../../../core/state/locale_provider.dart';
 import '../../../core/state/transport_settings_provider.dart';
 import '../../../core/state/theme_mode_provider.dart';
@@ -40,11 +41,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     final catalog = ref.read(companionCatalogProvider);
     try {
       final meta = await catalog.meta();
-      final range = await catalog.feedDateRange();
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      final ended =
-          range != null && today.isAfter(range.end) ? range.end : null;
+      final ended = await feedEndedOn(catalog, ref.read(clockProvider)());
       return (meta.dataAsOf, ended);
     } catch (e) {
       debugPrint('Settings: bundled pack meta failed: $e');
