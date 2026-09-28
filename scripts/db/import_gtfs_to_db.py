@@ -136,7 +136,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--db-url",
-        default=os.getenv("DB_URL", "postgresql://admin:rotransit_password@localhost:5433/rotransit"),
+        default=os.getenv("DB_URL", "postgresql://admin:rotransit_password@localhost:5432/rotransit"),
         help="Postgres URL in psycopg format",
     )
     args = parser.parse_args()

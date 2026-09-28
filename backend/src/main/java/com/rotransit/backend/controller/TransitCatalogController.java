@@ -40,6 +40,9 @@ public class TransitCatalogController {
         return transitCatalogService.listBusLines(cityId);
     }
 
+    // Not called by the app: Brașov timetables ship inside it. Heavy (walks every
+    // route/stop/day), so do not wire a client to it before it gets a cheap,
+    // feed-based version.
     @GetMapping("/offline-pack-meta")
     public OfflinePackMetaResponse offlinePackMeta(
             @RequestParam UUID cityId,
@@ -48,6 +51,9 @@ public class TransitCatalogController {
         return transitCatalogService.buildOfflinePackMeta(cityId, anchorMonday);
     }
 
+    // Not called by the app: Brașov timetables ship inside it. Heavy (walks every
+    // route/stop/day), so do not wire a client to it before it gets a cheap,
+    // feed-based version.
     @GetMapping("/offline-pack")
     public ResponseEntity<byte[]> offlinePack(
             @RequestParam UUID cityId,

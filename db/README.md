@@ -72,7 +72,15 @@ PowerShell wrapper:
 If needed, pass DB URL explicitly:
 
 ```powershell
-python scripts/db/import_gtfs_to_db.py --gtfs "otp/gtfs/ro-ratbv.zip" --city-id <CITY_UUID> --db-url "postgresql://admin:rotransit_password@localhost:5433/rotransit"
+python scripts/db/import_gtfs_to_db.py --gtfs "otp/gtfs/ro-ratbv.zip" --city-id <CITY_UUID> --db-url "postgresql://admin:rotransit_password@localhost:5432/rotransit"
+```
+
+## Cleanup for older databases
+
+Volumes created before accounts and the Bucharest placeholder city were removed still have the `users`, `saved_routes`, `favorite_stops` tables and the Bucharest row (so `/api/cities` still lists it). Run once, after a backup:
+
+```powershell
+docker compose exec -T db psql -U admin -d rotransit < db/postgres/cleanup/2026-09_drop_accounts_and_bucharest.sql
 ```
 
 ## 4) Refresh / reimport

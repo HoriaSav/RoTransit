@@ -2,20 +2,6 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 --------------------------------------------------
--- USERS
---------------------------------------------------
-CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    provider TEXT NOT NULL,                     -- google, apple, guest
-    provider_user_id TEXT NOT NULL,
-    email TEXT,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now(),
-
-    CONSTRAINT users_provider_unique UNIQUE (provider, provider_user_id)
-);
-
---------------------------------------------------
 -- CITIES
 --------------------------------------------------
 CREATE TABLE IF NOT EXISTS cities (
@@ -30,65 +16,6 @@ CREATE TABLE IF NOT EXISTS cities (
 );
 
 --------------------------------------------------
--- SAVED ROUTES
---------------------------------------------------
-CREATE TABLE IF NOT EXISTS saved_routes (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL,
-    city_id UUID NOT NULL,
-    label TEXT,
-    route_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now(),
-
-    CONSTRAINT fk_saved_routes_user
-        FOREIGN KEY (user_id)
-        REFERENCES users(id)
-        ON DELETE CASCADE,
-
-    CONSTRAINT fk_saved_routes_city
-        FOREIGN KEY (city_id)
-        REFERENCES cities(id)
-        ON DELETE CASCADE
-);
-
--- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_saved_routes_user_city
-    ON saved_routes(user_id, city_id);
-
-CREATE INDEX IF NOT EXISTS idx_saved_routes_user_created
-    ON saved_routes(user_id, created_at DESC);
-
---------------------------------------------------
--- FAVORITE STOPS
---------------------------------------------------
-CREATE TABLE IF NOT EXISTS favorite_stops (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL,
-    city_id UUID NOT NULL,
-    stop_id TEXT NOT NULL,
-    name TEXT,
-    created_at TIMESTAMPTZ DEFAULT now(),
-
-    CONSTRAINT fk_favorite_stops_user
-        FOREIGN KEY (user_id)
-        REFERENCES users(id)
-        ON DELETE CASCADE,
-
-    CONSTRAINT fk_favorite_stops_city
-        FOREIGN KEY (city_id)
-        REFERENCES cities(id)
-        ON DELETE CASCADE,
-
-    CONSTRAINT unique_favorite_stop
-        UNIQUE (user_id, city_id, stop_id)
-);
-
--- Index for quick lookup
-CREATE INDEX IF NOT EXISTS idx_favorite_stops_user_city
-    ON favorite_stops(user_id, city_id);
-
---------------------------------------------------
 -- SEED DATA
 --------------------------------------------------
 -- Fixed UUIDs so app clients (and imports) can use stable cityId across fresh Docker volumes.
@@ -101,14 +28,6 @@ VALUES (
 )
 ON CONFLICT (name, country) DO NOTHING;
 
-INSERT INTO cities (id, name, country, otp_base_url)
-VALUES (
-    'a1b2c3d4-e5f6-4789-a012-3456789abcde'::uuid,
-    'Bucharest',
-    'Romania',
-    'http://otp:8080/otp'
-)
-ON CONFLICT (name, country) DO NOTHING;
 
 --------------------------------------------------
 -- GTFS READ MODEL (for app catalog queries)

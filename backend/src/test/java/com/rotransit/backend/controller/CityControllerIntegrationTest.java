@@ -22,8 +22,6 @@ class CityControllerIntegrationTest {
 
     @Test
     @Sql(statements = {
-            "DELETE FROM saved_routes",
-            "DELETE FROM users",
             "DELETE FROM cities",
             "INSERT INTO cities (id, name, country, otp_base_url) VALUES (RANDOM_UUID(), 'Brasov', 'Romania', 'http://otp:8080/otp')",
             "INSERT INTO cities (id, name, country, otp_base_url) VALUES (RANDOM_UUID(), 'Cluj-Napoca', 'Romania', 'http://otp-cluj:8080/otp')"
