@@ -49,6 +49,11 @@ Thumbs.db
 # Backend build outputs
 backend/target/
 
+# backend_v2 build output and downloaded GTFS zips (do not upload)
+backend_v2/target/
+backend_v2/feeds/
+feeds/*.zip
+
 # Frontend generated/build outputs
 frontend/.dart_tool/
 frontend/build/
