@@ -96,16 +96,43 @@ void main() {
     expect(b.east, closeTo(25.60, 1e-9));
   });
 
+  testWidgets(
+      'without location the map opens at zoom 15 over Livada Poștei with '
+      'pins on the stops in view right away', (tester) async {
+    await _pumpMap(tester, located: false);
+    final cam = _camera(tester);
+    expect(cam.zoom, closeTo(kStopPinsMinZoom, 1e-9));
+    expect(cam.center.latitude, closeTo(45.6457, 1e-9));
+    expect(cam.center.longitude, closeTo(25.5884, 1e-9));
+
+    final all = await _allStops(tester);
+    final inView = all.where(cam.visibleBounds.contains).toSet();
+    expect(inView.length, greaterThan(5));
+    expect(_pins(tester).containsAll(inView), isTrue);
+  });
+
   testWidgets('below zoom 15 no stop pins are drawn and map taps open nothing',
       (tester) async {
     await _pumpMap(tester, located: false);
+    expect(_pins(tester), isNotEmpty);
+
+    // Pinch the fingers together (300 -> 100 px) to zoom out below 15.
+    final a = await tester.startGesture(const Offset(200, 250), pointer: 1);
+    final b = await tester.startGesture(const Offset(200, 550), pointer: 2);
+    for (var d = 2; d <= 100; d += 2) {
+      await a.moveTo(Offset(200, 250.0 + d));
+      await b.moveTo(Offset(200, 550.0 - d));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await a.up();
+    await b.up();
+    await settleLocation(tester);
     expect(_camera(tester).zoom, lessThan(kStopPinsMinZoom));
-    expect(await _allStops(tester), isNotEmpty);
 
     expect(_pins(tester), isEmpty);
     expect(find.byIcon(Icons.directions_bus_rounded), findsNothing);
 
-    // The default view is Brașov's centre, with stops around it.
+    // Livada Poștei's stops are around the centre.
     await tester.tapAt(const Offset(200, 400));
     await settleLocation(tester);
     expect(find.byType(StopBoardSheet), findsNothing);

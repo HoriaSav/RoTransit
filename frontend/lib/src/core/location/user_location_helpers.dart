@@ -41,6 +41,14 @@ bool isReliableUserPosition(Position position) {
   return accuracy <= _maxAcceptableAccuracyM;
 }
 
+/// True when a location permission prompt can show now: location services
+/// are on and the permission is undecided (Android reports "refused once,
+/// may ask again" the same way).
+Future<bool> canPromptForLocation() async {
+  if (!await Geolocator.isLocationServiceEnabled()) return false;
+  return await Geolocator.checkPermission() == LocationPermission.denied;
+}
+
 /// Opens the app settings page so the user can grant location permission.
 Future<bool> openUserLocationSettings() => Geolocator.openAppSettings();
 

@@ -77,7 +77,7 @@ void main() {
     await g.up();
     await settleLocation(tester);
     final panned = _camera(tester);
-    expect(panned.zoom, closeTo(11, 1e-6));
+    expect(panned.zoom, closeTo(kStopPinsMinZoom, 1e-6));
 
     geo.holdPosition!.complete();
     await settleLocation(tester);
@@ -87,7 +87,7 @@ void main() {
     final cam = _camera(tester);
     expect(cam.center.latitude, closeTo(panned.center.latitude, 1e-9));
     expect(cam.center.longitude, closeTo(panned.center.longitude, 1e-9));
-    expect(cam.zoom, closeTo(11, 1e-9), reason: 'no jump to zoom 16');
+    expect(cam.zoom, closeTo(kStopPinsMinZoom, 1e-9), reason: 'no jump to zoom 16');
   });
 
   testWidgets(

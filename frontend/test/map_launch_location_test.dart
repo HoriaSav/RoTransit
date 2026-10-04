@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,7 +8,9 @@ import 'package:latlong2/latlong.dart';
 import 'package:rotransit/l10n/app_localizations.dart';
 import 'package:rotransit/src/core/theme/app_theme.dart';
 import 'package:rotransit/src/features/map/data/companion_catalog.dart';
+import 'package:rotransit/src/features/map/presentation/map_companion_tab.dart';
 import 'package:rotransit/src/features/map/presentation/map_tab.dart';
+import 'package:rotransit/src/features/map/presentation/stop_board_sheet.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/fake_geolocator.dart';
@@ -16,17 +20,21 @@ import 'support/pack_test_env.dart';
 // channel: permission states, one-time prompt, centering and the stream.
 
 const _fix = LatLng(45.6427, 25.5887); // FakeGeolocator's getCurrentPosition
-const _default = LatLng(45.6579, 25.6012);
+const _default = LatLng(45.6457, 25.5884); // Livada Poștei, zoom 15
 
 // LocationPermission indexes on the wire.
 const _deniedForever = 1;
 const _whileInUse = 2;
 
-Future<void> _pumpMap(WidgetTester tester) async {
+Future<void> _pumpMap(WidgetTester tester,
+    {ProviderContainer? container}) async {
+  final c = container ?? ProviderContainer();
+  if (container == null) addTearDown(c.dispose);
   // Open the pack outside fake time so no pack I/O outlives the test.
   await tester.runAsync(() => CompanionCatalog.instance.allStops());
   await tester.pumpWidget(
-    ProviderScope(
+    UncontrolledProviderScope(
+      container: c,
       child: MaterialApp(
         theme: AppTheme.lightTheme,
         locale: const Locale('en'),
@@ -91,7 +99,7 @@ void main() {
     await _pumpMap(tester);
 
     expect(_requests(geo), 1);
-    _expectCamera(tester, _default, 11);
+    _expectCamera(tester, _default, 15);
     expect(geo.listenArgs, isEmpty);
     expect(userDot(tester), isNull);
     expect(find.byType(SnackBar), findsNothing);
@@ -100,7 +108,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await _pumpMap(tester);
     expect(_requests(geo), 1, reason: 'the launch prompt is shown only once');
-    _expectCamera(tester, _default, 11);
+    _expectCamera(tester, _default, 15);
     expect(geo.listenArgs, isEmpty);
     expect(find.byType(SnackBar), findsNothing);
   });
@@ -115,8 +123,79 @@ void main() {
 
     expect(_requests(geo), 0);
     expect(geo.calls, isNot(contains('getCurrentPosition')));
-    _expectCamera(tester, _default, 11);
+    _expectCamera(tester, _default, 15);
     expect(geo.listenArgs, isEmpty);
     expect(find.byType(SnackBar), findsNothing);
+  });
+
+  testWidgets(
+      'location services off at launch: no prompt and the launch prompt is '
+      'kept; the next launch with services on asks', (tester) async {
+    final geo = FakeGeolocator(grantOnRequest: true)
+      ..serviceEnabled = false
+      ..install(tester);
+    await _pumpMap(tester);
+
+    expect(_requests(geo), 0);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool('map_launch_location_prompted'), isNull);
+    _expectCamera(tester, _default, 15);
+    expect(find.byType(SnackBar), findsNothing);
+
+    // Next launch, location switched on.
+    geo.serviceEnabled = true;
+    await tester.pumpWidget(const SizedBox());
+    await _pumpMap(tester);
+    expect(_requests(geo), 1);
+    expect(prefs.getBool('map_launch_location_prompted'), isTrue);
+    _expectCamera(tester, _fix, 16);
+  });
+
+  testWidgets(
+      'a slow launch fix does not move the camera off a stop the app opened '
+      'meanwhile', (tester) async {
+    final geo = FakeGeolocator(grantOnRequest: false)
+      ..permission = _whileInUse
+      ..holdPosition = Completer<void>()
+      ..install(tester);
+    final c = ProviderContainer();
+    addTearDown(c.dispose);
+    await _pumpMap(tester, container: c);
+    expect(geo.calls, contains('getCurrentPosition'));
+
+    // A stop about 2 km from the rider's fix.
+    final stops =
+        await tester.runAsync(() => CompanionCatalog.instance.allStops());
+    const dist = Distance();
+    final stop = stops!.firstWhere(
+        (s) => dist.as(LengthUnit.Meter, _fix, LatLng(s.lat, s.lon)) > 2000);
+    c.read(companionFocusStopProvider.notifier).state = stop;
+    await settleLocation(tester);
+    expect(find.byType(StopBoardSheet), findsOneWidget);
+    final onStop = _camera(tester);
+
+    geo.holdPosition!.complete();
+    await settleLocation(tester);
+    expect(userDot(tester), _fix);
+    expect(geo.sink, isNotNull, reason: 'the stream still starts');
+    _expectCamera(tester, LatLng(stop.lat, stop.lon), onStop.zoom);
+  });
+
+  testWidgets(
+      'center-on-me during a slow launch fix: the camera ends at the '
+      'center-on-me zoom, not the launch zoom', (tester) async {
+    final geo = FakeGeolocator(grantOnRequest: false)
+      ..permission = _whileInUse
+      ..holdPosition = Completer<void>()
+      ..install(tester);
+    await _pumpMap(tester);
+
+    await tester.tap(find.byIcon(Icons.my_location_rounded));
+    await settleLocation(tester);
+    geo.holdPosition!.complete();
+    await settleLocation(tester);
+
+    _expectCamera(tester, _fix, 15.5);
+    expect(geo.sink, isNotNull);
   });
 }

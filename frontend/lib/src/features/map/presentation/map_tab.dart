@@ -61,9 +61,10 @@ class MapTab extends ConsumerStatefulWidget {
 class _MapTabState extends ConsumerState<MapTab>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   static const _tileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-  static const _fallbackCenter =
-      LatLng(kDefaultSearchRefLat, kDefaultSearchRefLon);
-  static const _fallbackZoom = 11.0;
+  /// No-location view: Livada Poștei in the centre (middle of its 7 stops),
+  /// at the zoom where stop pins show.
+  static const _fallbackCenter = LatLng(45.6457, 25.5884);
+  static const _fallbackZoom = kStopPinsMinZoom;
   static const _userZoom = 15.5;
   static const _launchZoom = 16.0;
   static const _launchPromptedKey = 'map_launch_location_prompted';
@@ -92,6 +93,9 @@ class _MapTabState extends ConsumerState<MapTab>
 
   /// Stops inside these bounds get pins; null below [kStopPinsMinZoom].
   LatLngBounds? _pinBounds;
+
+  /// Set once the rider (gesture, center-on-me) or the app (opening a stop)
+  /// chose a view; a slow launch fix then leaves the camera alone.
   bool _userMovedMap = false;
 
   /// Pointers on the map, for the pinch focal point and spread.
@@ -127,6 +131,7 @@ class _MapTabState extends ConsumerState<MapTab>
     _initCacheStore();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      _updatePinBounds(_mapController.camera); // the default view has pins
       unawaited(_loadCompanionStops());
       unawaited(_locateOnLaunch());
     });
@@ -135,13 +140,17 @@ class _MapTabState extends ConsumerState<MapTab>
   /// Launch: center on the rider when location is allowed. The permission
   /// prompt is shown at most once at launch (while still undecided); a
   /// refusal keeps the default Brașov view silently, and center-on-me keeps
-  /// working as before.
+  /// working as before. The prompt is only used up once it really showed
+  /// (not while location services are off). Android can't tell "undecided"
+  /// from "refused once", so a rider who refused before gets this one prompt.
   Future<void> _locateOnLaunch() async {
+    var prompting = false;
     try {
       if (!await ref.read(livePositionSourceProvider).canFollow()) {
         final prefs = await SharedPreferences.getInstance();
         if (prefs.getBool(_launchPromptedKey) ?? false) return;
-        await prefs.setBool(_launchPromptedKey, true);
+        if (!await canPromptForLocation()) return;
+        prompting = true;
       }
     } catch (e) {
       debugPrint('Launch location skipped: $e');
@@ -149,6 +158,11 @@ class _MapTabState extends ConsumerState<MapTab>
     }
     if (!mounted) return;
     final loc = await ref.read(userLocationProvider.notifier).resolve();
+    if (prompting) {
+      // resolve() has asked for permission by now.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_launchPromptedKey, true);
+    }
     if (!mounted || !loc.hasFix) return;
     final point = LatLng(loc.lat!, loc.lon!);
     setState(() => _userLocation = point);
@@ -288,6 +302,7 @@ class _MapTabState extends ConsumerState<MapTab>
   }
 
   Future<void> _centerOnUser() async {
+    _userMovedMap = true;
     if (_userLocation == null) {
       await _initUserLocation();
     }
@@ -378,6 +393,10 @@ class _MapTabState extends ConsumerState<MapTab>
     _syncMapRotation(camera.rotation);
     _mapZoom = camera.zoom;
     if (hasGesture) _userMovedMap = true;
+    _updatePinBounds(camera);
+  }
+
+  void _updatePinBounds(MapCamera camera) {
     final LatLngBounds? next;
     if (camera.zoom < kStopPinsMinZoom) {
       next = null;
@@ -389,8 +408,11 @@ class _MapTabState extends ConsumerState<MapTab>
     if (next != _pinBounds) setState(() => _pinBounds = next);
   }
 
-  /// Damps pinch zoom: flutter_map zooms by log2 of the finger spread; this
-  /// re-applies [kPinchZoomDamping] of that around the fingers' focal point.
+  /// Damps pinch zoom by finger spread: from the moment the zoom starts, the
+  /// map zooms [kPinchZoomDamping] x log2(spread / spread at start), around
+  /// the fingers' focal point, so spreading x3 and pinching to a third zoom by
+  /// the same amount. (flutter_map's own zoom is lopsided: after its gesture
+  /// race it continues from the winning spread additively, not by ratio.)
   /// Rotation (no zoom change) and one-finger drags pass through untouched.
   void _onShellMapEvent(MapEvent event) {
     if (event is MapEventMoveStart &&
@@ -458,6 +480,7 @@ class _MapTabState extends ConsumerState<MapTab>
   }
 
   Future<void> _openCompanionStop(StopSearchItem stop) async {
+    _userMovedMap = true;
     await _animateCameraTo(
       center: LatLng(stop.lat, stop.lon),
       zoom: math.max(_mapZoom, 15.5),
