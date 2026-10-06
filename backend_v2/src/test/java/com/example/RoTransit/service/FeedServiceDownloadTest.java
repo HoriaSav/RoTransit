@@ -52,13 +52,25 @@ import static org.mockito.Mockito.when;
  * to a local HTTPS server whose throwaway self-signed certificate (generated with keytool at test time) is for
  * files.mobilitydatabase.org. No product code is touched and no real network traffic happens.
  * <p>
- * FEEDS_ROOT is the relative path "feeds", so the test uses ids 990001..990004 inside ./feeds and deletes them afterwards.
+ * FEEDS_ROOT is the relative path "feeds", so the test uses ids 990001..990009 inside ./feeds and deletes them afterwards.
  */
 class FeedServiceDownloadTest {
 
     private static final String HOST = "files.mobilitydatabase.org";
-    private static final byte[] ZIP_BYTES = "PK\u0003\u0004 tiny fake zip for FeedServiceDownloadTest".getBytes(StandardCharsets.ISO_8859_1);
-    private static final List<Long> IDS = List.of(990001L, 990002L, 990003L, 990004L);
+    /** A small but real zip: download() now rejects bodies that are not a readable zip. */
+    private static final byte[] ZIP_BYTES = zip("stops.txt", "stop_id,stop_name\n1,FeedServiceDownloadTest\n");
+    private static final List<Long> IDS = List.of(990001L, 990002L, 990003L, 990004L, 990005L, 990006L, 990007L, 990008L, 990009L);
+    /** A real zip: feed_info.txt feed_end_date 2028-05-31 wins over calendar.txt end_date 2029-12-31. */
+    private static final byte[] DATED_ZIP = zip(
+            "feed_info.txt", "feed_publisher_name,feed_publisher_url,feed_lang,feed_end_date\nP,https://x,ro,20280531\n",
+            "calendar.txt", "service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date\n"
+                    + "wk,1,1,1,1,1,0,0,20260101,20291231\n");
+    /** A real zip without feed_info.txt, calendar.txt or calendar_dates.txt. */
+    private static final byte[] NO_DATES_ZIP = zip("stops.txt", "stop_id,stop_name\n1,A\n");
+    /** A 200 body that is not a zip at all (e.g. an HTML error page). */
+    private static final byte[] HTML_BODY = "<html>not a zip</html>".getBytes(StandardCharsets.UTF_8);
+    /** Starts with a valid local file header (PK\\3\\4) but is cut before the central directory. */
+    private static final byte[] TRUNCATED_ZIP = java.util.Arrays.copyOf(DATED_ZIP, DATED_ZIP.length / 2);
 
     private static HttpsServer https;
     private static ServerSocket proxy;
@@ -114,6 +126,30 @@ class FeedServiceDownloadTest {
                     exchange.sendResponseHeaders(200, ZIP_BYTES.length);
                     try (OutputStream out = exchange.getResponseBody()) {
                         out.write(ZIP_BYTES);
+                    }
+                }
+                case "/mdb-dated/latest.zip" -> {
+                    exchange.sendResponseHeaders(200, DATED_ZIP.length);
+                    try (OutputStream out = exchange.getResponseBody()) {
+                        out.write(DATED_ZIP);
+                    }
+                }
+                case "/mdb-nodates/latest.zip" -> {
+                    exchange.sendResponseHeaders(200, NO_DATES_ZIP.length);
+                    try (OutputStream out = exchange.getResponseBody()) {
+                        out.write(NO_DATES_ZIP);
+                    }
+                }
+                case "/mdb-html/latest.zip" -> {
+                    exchange.sendResponseHeaders(200, HTML_BODY.length);
+                    try (OutputStream out = exchange.getResponseBody()) {
+                        out.write(HTML_BODY);
+                    }
+                }
+                case "/mdb-truncated/latest.zip" -> {
+                    exchange.sendResponseHeaders(200, TRUNCATED_ZIP.length);
+                    try (OutputStream out = exchange.getResponseBody()) {
+                        out.write(TRUNCATED_ZIP);
                     }
                 }
                 case "/mdb-redirect/latest.zip" -> {
@@ -239,6 +275,107 @@ class FeedServiceDownloadTest {
         assertThat(result.getStatus()).isEqualTo("downloaded");
         // sourceUrl records the configured URL, not the redirect target
         assertThat(result.getSourceUrl()).isEqualTo("https://" + HOST + "/mdb-redirect/latest.zip");
+    }
+
+    @Test
+    void realZipSetsExpiresOnFromTheNewFileAndStatusDownloaded() throws Exception {
+        feed(990005L, "mdb-dated");
+
+        Feed result = service.download(990005L);
+
+        assertThat(Files.readAllBytes(FeedService.FEEDS_ROOT.resolve("990005.zip"))).isEqualTo(DATED_ZIP);
+        assertThat(result.getStatus()).isEqualTo("downloaded");
+        assertThat(result.getExpiresOn()).isEqualTo(java.time.LocalDate.of(2028, 5, 31));
+        assertThat(partFiles(990005L)).isEmpty();
+        verify(repo).save(result);
+    }
+
+    @Test
+    void zipWithoutDateSourcesStillSucceedsWithNullExpiresOn() throws Exception {
+        Feed feed = feed(990006L, "mdb-nodates");
+        feed.setExpiresOn(java.time.LocalDate.of(2020, 1, 1)); // stale value must not survive
+
+        Feed result = service.download(990006L);
+
+        assertThat(FeedService.FEEDS_ROOT.resolve("990006.zip")).exists();
+        assertThat(result.getStatus()).isEqualTo("downloaded");
+        assertThat(result.getExpiresOn()).isNull();
+        assertThat(result.getDownloadedAt()).isNotNull();
+        verify(repo).save(result);
+    }
+
+    @Test
+    void previouslyFailedFeedIsResetToDownloadedWithExpiresOn() throws Exception {
+        Feed feed = feed(990007L, "mdb-dated");
+        feed.setStatus("failed");
+        feed.setExpiresOn(null);
+
+        Feed result = service.download(990007L);
+
+        assertThat(result.getStatus()).isEqualTo("downloaded");
+        assertThat(result.getExpiresOn()).isEqualTo(java.time.LocalDate.of(2028, 5, 31));
+        assertThat(result.getLocalPath()).isEqualTo(FeedService.FEEDS_ROOT.resolve("990007.zip").toString());
+    }
+
+    @Test
+    void nonZipBodyWith200Gives502AndTheExistingZipAndEntityStayUntouched() throws Exception {
+        assertCorruptBodyIsRejected(990008L, "mdb-html");
+    }
+
+    @Test
+    void truncatedZipWith200Gives502AndTheExistingZipAndEntityStayUntouched() throws Exception {
+        assertThat(TRUNCATED_ZIP).startsWith((byte) 'P', (byte) 'K', (byte) 3, (byte) 4);
+        assertCorruptBodyIsRejected(990009L, "mdb-truncated");
+    }
+
+    private void assertCorruptBodyIsRejected(long id, String sourceId) throws Exception {
+        Feed feed = feed(id, sourceId);
+        Files.createDirectories(FeedService.FEEDS_ROOT);
+        Path existing = FeedService.FEEDS_ROOT.resolve(id + ".zip");
+        Files.write(existing, DATED_ZIP);
+        java.time.Instant downloadedAt = java.time.Instant.parse("2026-01-02T03:04:05Z");
+        feed.setStatus("downloaded");
+        feed.setLocalPath(existing.toString());
+        feed.setSourceUrl("https://example.invalid/previous.zip");
+        feed.setDownloadedAt(downloadedAt);
+        feed.setExpiresOn(java.time.LocalDate.of(2028, 5, 31));
+
+        assertThatThrownBy(() -> service.download(id))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> {
+                    ResponseStatusException rse = (ResponseStatusException) e;
+                    assertThat(rse.getStatusCode().value()).isEqualTo(502);
+                    assertThat(rse.getCause()).isInstanceOf(java.util.zip.ZipException.class);
+                    assertThat(rse.getReason())
+                            .contains("invalid zip")
+                            .contains("https://" + HOST + "/" + sourceId + "/latest.zip");
+                });
+
+        assertThat(requestedPaths).containsExactly("/" + sourceId + "/latest.zip");
+        assertThat(Files.readAllBytes(existing)).isEqualTo(DATED_ZIP);
+        assertThat(partFiles(id)).isEmpty();
+        assertThat(feed.getStatus()).isEqualTo("downloaded");
+        assertThat(feed.getLocalPath()).isEqualTo(existing.toString());
+        assertThat(feed.getSourceUrl()).isEqualTo("https://example.invalid/previous.zip");
+        assertThat(feed.getDownloadedAt()).isEqualTo(downloadedAt);
+        assertThat(feed.getExpiresOn()).isEqualTo(java.time.LocalDate.of(2028, 5, 31));
+        verify(repo, never()).save(any());
+    }
+
+    private static byte[] zip(String... nameContentPairs) {
+        try {
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+            try (java.util.zip.ZipOutputStream out = new java.util.zip.ZipOutputStream(bytes)) {
+                for (int i = 0; i < nameContentPairs.length; i += 2) {
+                    out.putNextEntry(new java.util.zip.ZipEntry(nameContentPairs[i]));
+                    out.write(nameContentPairs[i + 1].getBytes(StandardCharsets.UTF_8));
+                    out.closeEntry();
+                }
+            }
+            return bytes.toByteArray();
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
     }
 
     private static List<Path> partFiles(long id) throws IOException {

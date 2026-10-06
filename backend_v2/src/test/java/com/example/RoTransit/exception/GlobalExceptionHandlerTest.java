@@ -93,6 +93,25 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void invalidZipBadGatewayWithZipExceptionCauseStays502() throws Exception {
+        // the exact exception FeedService.download throws for a 200 body that is not a zip
+        FeedService service = mock(FeedService.class);
+        when(service.download(5L)).thenThrow(new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                "source sent an invalid zip for https://files.mobilitydatabase.org/mdb-x/latest.zip",
+                new java.util.zip.ZipException("zip END header not found")));
+        MockMvc mvc502 = MockMvcBuilders
+                .standaloneSetup(new FeedController(repo, mock(FeedUpdateJob.class), service))
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .build();
+
+        mvc502.perform(request(org.springframework.http.HttpMethod.POST, "/feeds/5/download"))
+                .andExpect(status().isBadGateway())
+                .andExpect(result -> assertThat(result.getResolvedException())
+                        .isInstanceOf(ResponseStatusException.class)
+                        .hasCauseInstanceOf(java.util.zip.ZipException.class));
+    }
+
+    @Test
     void otherExceptionsAreNotMappedTo404() throws Exception {
         FeedService service = mock(FeedService.class);
         when(service.getExpireDate(5L)).thenThrow(new IllegalStateException("feed_info.txt is missing"));

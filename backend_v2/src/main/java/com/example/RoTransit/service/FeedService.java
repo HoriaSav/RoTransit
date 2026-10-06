@@ -2,6 +2,8 @@ package com.example.RoTransit.service;
 
 import com.example.RoTransit.entity.Feed;
 import com.example.RoTransit.repository.FeedRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -25,10 +27,12 @@ import java.time.format.DateTimeParseException;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
+import java.util.zip.ZipException;
 
 @Service
 public class FeedService {
     public static final Path FEEDS_ROOT = Path.of("feeds");
+    private static final Logger log = LoggerFactory.getLogger(FeedService.class);
 
     private final FeedRepository feeds;
     private final HttpClient client = HttpClient.newBuilder()
@@ -57,6 +61,17 @@ public class FeedService {
                 throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
                         "source returned " + response.statusCode() + " for " + sourceUrl);
             }
+            // TODO: a new feed may only start service in the future (e.g. a timetable change next week).
+            // Read its earliest start date (feed_info.txt feed_start_date, else calendar.txt start_date);
+            // if it is after today, keep the current zip and store this one as the upcoming feed
+            // (e.g. feeds/{id}-next.zip with a starts_on column) and let FeedUpdateJob promote it on that date.
+            // Belongs with the multi-operator DB redesign; meanwhile consider a log.warn
+            // when the new feed starts after today.
+            try (ZipFile check = new ZipFile(temp.toFile())) {} // throws if its not a valid zip
+            catch (ZipException e) {
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                        "source sent an invalid zip for " + sourceUrl, e);
+            }
             Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } finally {
             // after a successful move the temp file is gone, so this only cleans up failures
@@ -68,18 +83,28 @@ public class FeedService {
         feed.setSourceUrl(sourceUrl);
         feed.setDownloadedAt(Instant.now());
 
+        try {
+            feed.setExpiresOn(readExpireDate(file));
+        }
+        catch (IOException | IllegalStateException e) {
+            log.warn("Could not read expiry date for feed {}", id, e);
+            feed.setExpiresOn(null);
+        }
+
         return feeds.save(feed);
     }
 
     public LocalDate getExpireDate(Long id) throws IOException {
-
         Feed feed = feeds.findById(id).orElseThrow();
+        return readExpireDate(Path.of(feed.getLocalPath()));
+    }
 
-        try (ZipFile zip = new ZipFile(Path.of(feed.getLocalPath()).toFile())){
+    public LocalDate readExpireDate(Path file) throws IOException {
+        try (ZipFile zip = new ZipFile(file.toFile())){
             LocalDate date = latestDate(zip, "feed_info.txt", "feed_end_date");
             if (date == null) date = latestDate(zip, "calendar.txt", "end_date");
             if (date == null) date = latestDate(zip, "calendar_dates.txt", "date");
-            if (date == null) throw new IllegalStateException("no expiry date found in " + feed.getLocalPath());
+            if (date == null) throw new IllegalStateException("no expiry date found in " + file);
             return date;
         }
     }

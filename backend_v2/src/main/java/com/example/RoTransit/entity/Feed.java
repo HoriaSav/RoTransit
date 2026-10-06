@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 
 import java.time.Instant;
+import java.time.LocalDate;
 
 @Entity
 public class Feed {
@@ -17,7 +18,8 @@ public class Feed {
     private String cityName;
     private String companyName;
     private Instant downloadedAt;
-    private String status;
+    private LocalDate expiresOn;
+    private String status = "new";
     @JsonIgnore
     private String localPath;
 
@@ -31,7 +33,6 @@ public class Feed {
     public String getCityName() {
         return cityName;
     }
-
     public void setCityName(String cityName) {
         this.cityName = cityName;
     }
@@ -39,7 +40,6 @@ public class Feed {
     public String getSourceUrl() {
         return sourceUrl;
     }
-
     public void setSourceUrl(String sourceUrl) {
         this.sourceUrl = sourceUrl;
     }
@@ -47,7 +47,6 @@ public class Feed {
     public Instant getDownloadedAt() {
         return downloadedAt;
     }
-
     public void setDownloadedAt(Instant downloadedAt) {
         this.downloadedAt = downloadedAt;
     }
@@ -55,7 +54,6 @@ public class Feed {
     public String getStatus() {
         return status;
     }
-
     public void setStatus(String status) {
         this.status = status;
     }
@@ -63,7 +61,6 @@ public class Feed {
     public String getLocalPath() {
         return localPath;
     }
-
     public void setLocalPath(String localPath) {
         this.localPath = localPath;
     }
@@ -71,7 +68,6 @@ public class Feed {
     public String getSourceId() {
         return sourceId;
     }
-
     public void setSourceId(String sourceId) {
         this.sourceId = sourceId;
     }
@@ -79,8 +75,14 @@ public class Feed {
     public String getCompanyName() {
         return companyName;
     }
-
     public void setCompanyName(String companyName) {
         this.companyName = companyName;
+    }
+
+    public LocalDate getExpiresOn() {
+        return expiresOn;
+    }
+    public void setExpiresOn(LocalDate expiresOn) {
+        this.expiresOn = expiresOn;
     }
 }

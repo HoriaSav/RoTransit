@@ -4,7 +4,8 @@ create TABLE feed(
     company_name VARCHAR(100) NOT NULL,
     source_id VARCHAR(50) NOT NULL UNIQUE,
     source_url VARCHAR(255),
-    status VARCHAR(30),
+    status VARCHAR(30) NOT NULL DEFAULT 'new',
     local_path VARCHAR(255),
-    downloaded_at TIMESTAMPTZ
+    downloaded_at TIMESTAMPTZ,
+    expires_on DATE
 );

@@ -30,28 +30,31 @@ public class FeedUpdateJob {
 
     public void updateFeeds(Consumer<String> onResult) {
         for (Feed feed : feeds.findAll()) {
+            String result;
             try {
                 boolean missing = feed.getLocalPath() == null || feed.getLocalPath().isBlank() || !Files.isRegularFile(Path.of(feed.getLocalPath()));
-                if (missing) {
+                LocalDate expires = feed.getExpiresOn();
+                boolean expiring = expires == null || expires.isBefore(LocalDate.now().plusDays(7));
+
+                if (missing || expiring) {
                     feedService.download(feed.getId());
                     logSuccessfulDownload(feed);
-                    onResult.accept(feed.getCityName() + " has been updated!");
-                    continue;
+                    result = feed.getCityName() + " has been updated!";
                 }
-                LocalDate expires = feedService.getExpireDate(feed.getId());
-                if (expires.isBefore(LocalDate.now().plusDays(7))) {
-                    feedService.download(feed.getId());
-                    logSuccessfulDownload(feed);
-                    onResult.accept(feed.getCityName() + " has been updated!");
-                    continue;
+                else {
+                    logIsUpToDate(feed);
+                    result = feed.getCityName() + " is up to date!";
                 }
-                logIsUpToDate(feed);
-                onResult.accept(feed.getCityName() + " is up to date!");
             }
             catch (Exception e) {
                 logFailedDownload(feed, e);
-                onResult.accept(feed.getCityName() + " failed, " + e.getMessage());
+                feeds.findById(feed.getId()).ifPresent(fresh -> {
+                    fresh.setStatus("failed");
+                    feeds.save(fresh);
+                });
+                result = feed.getCityName() + " failed, " + e.getMessage();
             }
+            onResult.accept(result);
         }
     }
 

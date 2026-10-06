@@ -199,13 +199,14 @@ class FeedControllerTest {
                 .andExpect(jsonPath("$.cityName").value("Probe"))
                 .andExpect(jsonPath("$.companyName").value("ProbeCo"))
                 .andExpect(jsonPath("$.sourceId").value("mdb-probe"))
+                .andExpect(jsonPath("$.status").value("new"))
                 .andExpect(jsonPath("$.localPath").doesNotExist());
 
         ArgumentCaptor<Feed> captor = ArgumentCaptor.forClass(Feed.class);
         verify(repo).save(captor.capture());
         Feed saved = captor.getValue();
         assertThat(saved.getLocalPath()).isNull();
-        assertThat(saved.getStatus()).isNull();
+        assertThat(saved.getStatus()).isEqualTo("new"); // entity default, not the "hacked" value from the body
         assertThat(saved.getSourceId()).isEqualTo("mdb-probe");
         assertThat(saved.getDownloadedAt()).isNotNull();
     }
