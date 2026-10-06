@@ -21,6 +21,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -70,46 +71,66 @@ public class FeedService {
         return feeds.save(feed);
     }
 
-    // TODO: when feed_info.txt or feed_end_date is missing (Cluj's zip has no feed_info.txt),
-    // fall back to the latest end_date in calendar.txt, then to the latest date in calendar_dates.txt,
-    // and throw only if none of them has a date. Extract a private helper
-    // LocalDate latestDate(ZipFile zip, String fileName, String column) that returns null when the file or column is missing.
     public LocalDate getExpireDate(Long id) throws IOException {
-        Feed feed = feeds.findById(id).orElseThrow();
-        String fileName = "feed_info.txt";
 
-        try (ZipFile zip = new ZipFile(Path.of(feed.getLocalPath()).toFile())) {
-            ZipEntry entry = zip.getEntry(fileName);
-            if (entry == null) {
-                throw new IllegalStateException(fileName + " is missing");
+        Feed feed = feeds.findById(id).orElseThrow();
+
+        try (ZipFile zip = new ZipFile(Path.of(feed.getLocalPath()).toFile())){
+            LocalDate date = latestDate(zip, "feed_info.txt", "feed_end_date");
+            if (date == null) date = latestDate(zip, "calendar.txt", "end_date");
+            if (date == null) date = latestDate(zip, "calendar_dates.txt", "date");
+            if (date == null) throw new IllegalStateException("no expiry date found in " + feed.getLocalPath());
+            return date;
+        }
+    }
+
+    private LocalDate latestDate (ZipFile zip, String fileName, String column) throws IOException {
+        ZipEntry entry = zip.getEntry(fileName);
+        if (entry == null) {
+            return null;
+        }
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(zip.getInputStream(entry), StandardCharsets.UTF_8))) {
+            String header = reader.readLine();
+            if (header == null) {
+                return null;
             }
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(zip.getInputStream(entry), StandardCharsets.UTF_8))) {
-                String header = reader.readLine();
-                if (header == null) {
-                    throw new IllegalStateException(fileName + " is missing feed_end_date");
+            header = header.replace("\uFEFF", "");
+
+            String[] columns = header.split(",");
+            int index = -1;
+            for (int i = 0; i < columns.length; i++) {
+                if (columns[i].trim().replace("\"", "").equals(column)){
+                    index = i;
+                    break;
                 }
-                String[] columns = header.split(",");
-                int endDate = -1;
-                for (int i = 0; i < columns.length; i++) {
-                    if ("feed_end_date".equals(columns[i].trim())) {
-                        endDate = i;
-                        break;
+            }
+            if (index == -1) {
+                return null;
+            }
+
+            LocalDate latest = null;
+            String line;
+            while ((line = reader.readLine()) != null){
+                String [] fields = line.split(",", -1);
+                if (index >= fields.length) {
+                    continue;
+                }
+                String value = fields[index].trim().replace("\"", "");
+                if (value.isEmpty()) {
+                    continue;
+                }
+                try {
+                    LocalDate d = LocalDate.parse(value, DateTimeFormatter.BASIC_ISO_DATE);
+                    if (latest == null || d.isAfter(latest)) {
+                        latest = d;
                     }
                 }
-                if (endDate < 0) {
-                    throw new IllegalStateException(fileName + " is missing feed_end_date");
+                catch (DateTimeParseException e) {
+                    //bad date in this row, skip it
                 }
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.isBlank()) {
-                        continue;
-                    }
-                    String[] fields = line.split(",");
-                    return LocalDate.parse(fields[endDate].trim(), DateTimeFormatter.BASIC_ISO_DATE);
-                }
-                throw new IllegalStateException(fileName + " has no data");
             }
+
+            return latest;
         }
     }
 }
