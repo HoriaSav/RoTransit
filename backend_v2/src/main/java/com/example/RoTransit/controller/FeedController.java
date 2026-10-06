@@ -1,40 +1,41 @@
 package com.example.RoTransit.controller;
 
+import com.example.RoTransit.dto.CreateFeedRequest;
+import com.example.RoTransit.dto.FeedSummary;
 import com.example.RoTransit.entity.Feed;
 import com.example.RoTransit.repository.FeedRepository;
+import com.example.RoTransit.service.FeedService;
 import com.example.RoTransit.service.FeedUpdateJob;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 @RestController
 public class FeedController {
 
     private final FeedRepository feeds;
     private final FeedUpdateJob feedUpdateJob;
+    private final FeedService feedService;
 
-    public FeedController(FeedRepository feeds, FeedUpdateJob feedUpdateJob) {
+    public FeedController(FeedRepository feeds, FeedUpdateJob feedUpdateJob, FeedService feedService) {
         this.feeds = feeds;
         this.feedUpdateJob = feedUpdateJob;
+        this.feedService = feedService;
     }
 
     @GetMapping("/feeds")
@@ -43,7 +44,11 @@ public class FeedController {
     }
 
     @PostMapping("/feeds")
-    public Feed createFeed(@RequestBody Feed feed) {
+    public Feed createFeed(@RequestBody CreateFeedRequest request) {
+        Feed feed = new Feed();
+        feed.setCityName(request.cityName());
+        feed.setCompanyName(request.companyName());
+        feed.setSourceId(request.sourceId());
         feed.setDownloadedAt(Instant.now());
         return feeds.save(feed);
     }
@@ -53,39 +58,24 @@ public class FeedController {
         return feeds.findById(id).orElseThrow();
     }
 
-    // TODO: declare IOException and InterruptedException instead of Exception, and return 502 when the URL is down
-
     @PostMapping("/feeds/{id}/download")
-    public Feed downloadFeedById(@PathVariable Long id) throws Exception {
-
-        Feed feed = feeds.findById(id).orElseThrow();
-        String fileName = id + "_" + feed.getCityName() + "_" + feed.getCompanyName() + ".zip";
-        Path file = Path.of("feeds", fileName);
-        String sourceUrl = "https://files.mobilitydatabase.org/" + feed.getSourceId() + "/latest.zip";
-
-        Files.createDirectories(file.getParent());
-
-        HttpClient client = HttpClient.newHttpClient();
-        HttpRequest request = HttpRequest.newBuilder(URI.create(sourceUrl)).GET().build();
-        client.send(request, HttpResponse.BodyHandlers.ofFile(file));
-
-        feed.setLocalPath(file.toString());
-        feed.setStatus("downloaded");
-        feed.setSourceUrl(sourceUrl);
-        feed.setDownloadedAt(Instant.now());
-
-        return feeds.save(feed);
+    public Feed downloadFeedById(@PathVariable Long id) throws IOException, InterruptedException {
+        return feedService.download(id);
     }
 
     @GetMapping("/feeds/{id}/file")
-    public ResponseEntity<Resource> getFeedFile(@PathVariable Long id) {
+    public ResponseEntity<Resource> getFeedFile(@PathVariable Long id) throws IOException {
         Feed feed = feeds.findById(id).orElseThrow();
         if (feed.getLocalPath() == null || feed.getLocalPath().isBlank()) {
-            throw new IllegalStateException("feed file is missing");
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         }
         Path file = Path.of(feed.getLocalPath());
-        if (!Files.isRegularFile(file)) {
-            throw new IllegalStateException("feed file is missing");
+        if (!Files.isRegularFile(file) || !Files.isDirectory(FeedService.FEEDS_ROOT)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        }
+        // toRealPath follows symlinks, so a link inside feeds/ that points outside is rejected too
+        if (!file.toRealPath().startsWith(FeedService.FEEDS_ROOT.toRealPath())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         }
         String fileName = file.getFileName().toString();
         return ResponseEntity.ok()
@@ -95,47 +85,26 @@ public class FeedController {
     }
 
     @GetMapping("/feeds/{id}/expires")
-    public LocalDate getFeedExpireDate(@PathVariable Long id) throws Exception {
-        Feed feed = feeds.findById(id).orElseThrow();
-        String fileName = "feed_info.txt";
-
-        try (ZipFile zip = new ZipFile(Path.of(feed.getLocalPath()).toFile())) {
-            ZipEntry entry = zip.getEntry(fileName);
-            if (entry == null) {
-                throw new IllegalStateException(fileName + " is missing");
-            }
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(zip.getInputStream(entry), StandardCharsets.UTF_8))) {
-                String header = reader.readLine();
-                if (header == null) {
-                    throw new IllegalStateException(fileName + " is missing feed_end_date");
-                }
-                String[] columns = header.split(",");
-                int endDate = -1;
-                for (int i = 0; i < columns.length; i++) {
-                    if ("feed_end_date".equals(columns[i].trim())) {
-                        endDate = i;
-                        break;
-                    }
-                }
-                if (endDate < 0) {
-                    throw new IllegalStateException(fileName + " is missing feed_end_date");
-                }
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.isBlank()) {
-                        continue;
-                    }
-                    String[] fields = line.split(",");
-                    return LocalDate.parse(fields[endDate].trim(), DateTimeFormatter.BASIC_ISO_DATE);
-                }
-                throw new IllegalStateException(fileName + " has no data");
-            }
-        }
+    public LocalDate getFeedExpireDate(@PathVariable Long id) throws IOException {
+        return feedService.getExpireDate(id);
     }
 
+    // out.flush() only reaches the client because spring.properties sets spring.http.response.flush.enabled=true
     @PostMapping("/feeds/update")
-    public List <String> updateFeedsNow() {
-        return feedUpdateJob.updateFeeds();
+    public ResponseEntity<StreamingResponseBody> updateFeedsNow() {
+        StreamingResponseBody body = out -> feedUpdateJob.updateFeeds(line -> {
+            try {
+                out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                out.flush();
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
+        return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN).body(body);
+    }
+
+    @GetMapping("/api/feeds")
+    public List<FeedSummary> getPublicFeedList() {
+        return feeds.findAll().stream().map(FeedSummary::from).toList();
     }
 }

@@ -1,5 +1,6 @@
 package com.example.RoTransit.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -17,6 +18,7 @@ public class Feed {
     private String companyName;
     private Instant downloadedAt;
     private String status;
+    @JsonIgnore
     private String localPath;
 
     private String sourceId;
