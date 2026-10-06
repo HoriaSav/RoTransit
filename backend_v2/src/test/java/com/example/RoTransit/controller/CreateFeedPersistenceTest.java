@@ -20,7 +20,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * POST /feeds against the real Postgres schema (feeds.feed.status is NOT NULL DEFAULT 'new').
+ * POST /admin/feeds against the real Postgres schema (feeds.feed.status is NOT NULL DEFAULT 'new').
  * Same database as RoTransitApplicationTests. @Transactional makes the test roll back, so no row is left behind:
  * MockMvc runs in the test thread, so the repository save joins the test transaction.
  */
@@ -43,7 +43,7 @@ class CreateFeedPersistenceTest {
 
     @Test
     void postWithoutStatusPersistsStatusNew() throws Exception {
-        MvcResult result = mvc.perform(post("/feeds")
+        MvcResult result = mvc.perform(post("/admin/feeds")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"cityName":"RollbackTestCity","companyName":"RollbackTestCo","sourceId":"mdb-rollback-test-r14"}
