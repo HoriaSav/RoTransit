@@ -36,3 +36,28 @@ jobs:
           java-version: '21'
           cache: maven
       - run: ./mvnw -B test
+
+      # JaCoCo writes target/site/jacoco during the test phase
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: jacoco-report
+          path: backend_v2/target/site/jacoco
+          if-no-files-found: warn
+
+      - name: Coverage summary
+        if: always() && hashFiles('backend_v2/target/site/jacoco/jacoco.csv') != ''
+        run: |
+          awk -F, '
+            function pct(c, m) { return (c + m) ? sprintf("%.1f%%", 100 * c / (c + m)) : "n/a" }
+            NR > 1 { im += $4; ic += $5; bm += $6; bc += $7; lm += $8; lc += $9 }
+            END {
+              print "### Test coverage (JaCoCo)"
+              print ""
+              print "| Metric | Covered | Total | Coverage |"
+              print "|---|---:|---:|---:|"
+              printf "| Lines | %d | %d | %s |\n", lc, lc + lm, pct(lc, lm)
+              printf "| Branches | %d | %d | %s |\n", bc, bc + bm, pct(bc, bm)
+              printf "| Instructions | %d | %d | %s |\n", ic, ic + im, pct(ic, im)
+            }' target/site/jacoco/jacoco.csv >> "$GITHUB_STEP_SUMMARY"
