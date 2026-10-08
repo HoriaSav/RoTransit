@@ -3,11 +3,14 @@ package com.example.RoTransit.controller;
 import com.example.RoTransit.service.FeedService;
 import com.example.RoTransit.service.FeedUpdateJob;
 import com.jayway.jsonpath.JsonPath;
+import jakarta.servlet.Filter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -18,9 +21,11 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.WebApplicationContext;
 
+import java.nio.charset.StandardCharsets;
 import java.sql.Date;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
@@ -34,6 +39,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Route mapping and GET /admin/feeds against the real application context and the real Postgres
  * (same DB as RoTransitApplicationTests). FeedService and FeedUpdateJob are mocked so a wrongly mapped route can
  * never download or update anything; @Transactional rolls back every probe row (MockMvc runs in the test thread).
+ * The real Spring Security filter chain is applied (MockMvc + springSecurityFilterChain), so requests carry HTTP Basic
+ * credentials for the admin user (test-only password from src/test/resources/config/application.properties).
  */
 @SpringBootTest
 @Transactional
@@ -51,42 +58,62 @@ class AdminRoutesContextTest {
     @MockitoBean
     private FeedUpdateJob feedUpdateJob;
 
+    @Value("${spring.security.user.name}")
+    private String adminUser;
+
+    @Value("${spring.security.user.password}")
+    private String adminPassword;
+
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
-        mvc = MockMvcBuilders.webAppContextSetup(context).build();
+        mvc = MockMvcBuilders.webAppContextSetup(context)
+                .addFilters(context.getBean("springSecurityFilterChain", Filter.class))
+                .build();
+    }
+
+    private String basicAuth() {
+        return "Basic " + Base64.getEncoder().encodeToString((adminUser + ":" + adminPassword).getBytes(StandardCharsets.UTF_8));
     }
 
     private int rowCount() {
         return jdbc.queryForObject("select count(*) from feeds.feed", Integer.class);
     }
 
-    @ParameterizedTest(name = "{0} {1} -> {2}")
+    @ParameterizedTest(name = "{0} {1} -> admin {2}, anonymous {3}")
     @CsvSource({
-            // routes that moved: the old paths must be gone
-            "GET,  /feeds,            404",
-            "POST, /feeds,            404",
-            "GET,  /feeds/1,          404",
-            "POST, /feeds/1/download, 404",
-            "POST, /feeds/update,     404",
-            "GET,  /feeds/1/expires,  404",
-            "GET,  /feeds/1/file,     404",
-            // new routes must not answer under the other prefix
-            "GET,  /api/feeds/1/expires,   404",
-            "POST, /api/feeds/update,      404",
-            "POST, /api/feeds/1/download,  404",
-            "GET,  /api/feeds/1,           404",
-            "POST, /api/feeds,             405",
-            "GET,  /admin/feeds/1/file,    404"
+            // routes that moved: the old paths must be gone. Since SecurityConfig they never reach MVC:
+            // anyRequest().denyAll() answers 403 for the authenticated admin and 401 for anonymous (was 404 before security)
+            "GET,  /feeds,            403, 401",
+            "POST, /feeds,            403, 401",
+            "GET,  /feeds/1,          403, 401",
+            "POST, /feeds/1/download, 403, 401",
+            "POST, /feeds/update,     403, 401",
+            "GET,  /feeds/1/expires,  403, 401",
+            "GET,  /feeds/1/file,     403, 401",
+            // new routes must not answer under the other prefix (/api/** is permitAll, so MVC decides: 404/405)
+            "GET,  /api/feeds/1/expires,   404, 404",
+            "POST, /api/feeds/update,      404, 404",
+            "POST, /api/feeds/1/download,  404, 404",
+            "GET,  /api/feeds/1,           404, 404",
+            "POST, /api/feeds,             405, 405",
+            // /admin/** needs ADMIN first, then MVC has no such route
+            "GET,  /admin/feeds/1/file,    404, 401"
     })
-    void oldAndWrongPrefixPathsAreNotMappedAndHaveNoSideEffects(String method, String path, int expected) throws Exception {
+    void oldAndWrongPrefixPathsAreNotMappedAndHaveNoSideEffects(String method, String path, int asAdmin, int anonymous) throws Exception {
         int before = rowCount();
+        String body = "{\"cityName\":\"OldPathProbe\",\"companyName\":\"X\",\"sourceId\":\"mdb-old-path\"}";
 
         mvc.perform(request(HttpMethod.valueOf(method), path)
+                        .header(HttpHeaders.AUTHORIZATION, basicAuth())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"cityName\":\"OldPathProbe\",\"companyName\":\"X\",\"sourceId\":\"mdb-old-path\"}"))
-                .andExpect(status().is(expected));
+                        .content(body))
+                .andExpect(status().is(asAdmin));
+        mvc.perform(request(HttpMethod.valueOf(method), path)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().is(anonymous));
 
         assertThat(rowCount()).isEqualTo(before);
         verifyNoInteractions(feedService, feedUpdateJob);
@@ -102,7 +129,7 @@ class AdminRoutesContextTest {
         insert("CtxTieB", today.plusDays(10));
         int total = rowCount();
 
-        String json = mvc.perform(get("/admin/feeds"))
+        String json = mvc.perform(get("/admin/feeds").header(HttpHeaders.AUTHORIZATION, basicAuth()))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         List<Map<String, Object>> list = JsonPath.read(json, "$");
