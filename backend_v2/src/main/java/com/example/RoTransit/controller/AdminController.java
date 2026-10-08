@@ -1,9 +1,14 @@
 package com.example.RoTransit.controller;
 
 import com.example.RoTransit.dto.CreateFeedRequest;
+import com.example.RoTransit.dto.FeedDetails;
 import com.example.RoTransit.dto.FeedStatus;
 import com.example.RoTransit.entity.Feed;
+import com.example.RoTransit.entity.FeedVersion;
 import com.example.RoTransit.repository.FeedRepository;
+import com.example.RoTransit.repository.FeedSourceRepository;
+import com.example.RoTransit.repository.FeedVersionRepository;
+import com.example.RoTransit.service.DownloadResult;
 import com.example.RoTransit.service.FeedService;
 import com.example.RoTransit.service.FeedUpdateJob;
 import org.springframework.http.MediaType;
@@ -19,27 +24,36 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/admin")
 public class AdminController {
     private final FeedRepository feeds;
+    private final FeedSourceRepository sources;
+    private final FeedVersionRepository versions;
     private final FeedService feedService;
     private final FeedUpdateJob feedUpdateJob;
 
-    public AdminController(FeedRepository feeds, FeedService feedService, FeedUpdateJob feedUpdateJob) {
+    public AdminController(FeedRepository feeds, FeedSourceRepository sources, FeedVersionRepository versions,
+                           FeedService feedService, FeedUpdateJob feedUpdateJob) {
         this.feeds = feeds;
+        this.sources = sources;
+        this.versions = versions;
         this.feedService = feedService;
         this.feedUpdateJob = feedUpdateJob;
     }
 
     @GetMapping("/feeds")
     public List<FeedStatus> feeds(){
-        return feeds.findAll().stream().map(FeedStatus::from)
+        // three queries in total (feeds, current versions, latest attempts), not one per feed
+        Map<Long, FeedVersion> current = versions.findCurrentByFeedId();
+        Map<Long, FeedVersion> latest = versions.findLatestByFeedId();
+        return feeds.findAll().stream()
+                .map(feed -> FeedStatus.from(feed, current.get(feed.getId()), latest.get(feed.getId())))
                 .sorted(Comparator.comparing(FeedStatus::expiresOn,
                         Comparator.nullsFirst(Comparator.naturalOrder()))
                         .thenComparing(FeedStatus::id))
@@ -47,23 +61,20 @@ public class AdminController {
     }
 
     @PostMapping("/feeds")
-    public Feed createFeed(@RequestBody CreateFeedRequest request) {
-        Feed feed = new Feed();
-        feed.setCityName(request.cityName());
-        feed.setCompanyName(request.companyName());
-        feed.setSourceId(request.sourceId());
-        feed.setDownloadedAt(Instant.now());
-        return feeds.save(feed);
+    public FeedDetails createFeed(@RequestBody CreateFeedRequest request) {
+        Feed feed = feedService.createFeed(request.cityName(), request.companyName(), request.sourceId());
+        return details(feed);
     }
 
     @GetMapping("/feeds/{id}")
-    public Feed getFeedById(@PathVariable Long id) {
-        return feeds.findById(id).orElseThrow();
+    public FeedDetails getFeedById(@PathVariable Long id) {
+        return details(feeds.findById(id).orElseThrow());
     }
 
     @PostMapping("/feeds/{id}/download")
-    public Feed downloadFeedById(@PathVariable Long id) throws IOException, InterruptedException {
-        return feedService.download(id);
+    public FeedDetails downloadFeedById(@PathVariable Long id) throws IOException, InterruptedException {
+        DownloadResult result = feedService.download(id);
+        return details(result.version().getFeed()).withUnchanged(result.unchanged());
     }
 
     @GetMapping("/feeds/{id}/expires")
@@ -83,5 +94,12 @@ public class AdminController {
             }
         });
         return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN).body(body);
+    }
+
+    private FeedDetails details(Feed feed) {
+        return FeedDetails.from(feed,
+                sources.findByFeedIdAndPriority(feed.getId(), 1).orElse(null),
+                versions.findByFeedIdAndStatus(feed.getId(), FeedVersion.CURRENT).orElse(null),
+                versions.findFirstByFeedIdOrderByIdDesc(feed.getId()).orElse(null));
     }
 }

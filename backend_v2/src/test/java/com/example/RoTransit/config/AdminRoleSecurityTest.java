@@ -1,6 +1,9 @@
 package com.example.RoTransit.config;
 
 import com.example.RoTransit.repository.FeedRepository;
+import com.example.RoTransit.repository.FeedSourceRepository;
+import com.example.RoTransit.repository.FeedVersionRepository;
+import com.example.RoTransit.repository.OperatorRepository;
 import com.example.RoTransit.service.FeedService;
 import com.example.RoTransit.service.FeedUpdateJob;
 import jakarta.servlet.Filter;
@@ -49,6 +52,15 @@ class AdminRoleSecurityTest {
     private FeedRepository repo;
 
     @MockitoBean
+    private FeedSourceRepository sources;
+
+    @MockitoBean
+    private FeedVersionRepository versions;
+
+    @MockitoBean
+    private OperatorRepository operators;
+
+    @MockitoBean
     private FeedService feedService;
 
     @MockitoBean
@@ -84,6 +96,6 @@ class AdminRoleSecurityTest {
                         .content("{\"cityName\":\"RoleProbe\",\"companyName\":\"X\",\"sourceId\":\"mdb-role\"}"))
                 .andExpect(status().is(expected));
 
-        verifyNoInteractions(feedService, feedUpdateJob);
+        verifyNoInteractions(feedService, feedUpdateJob, sources, versions);
     }
 }

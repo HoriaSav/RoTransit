@@ -77,7 +77,13 @@ class AdminRoutesContextTest {
         return "Basic " + Base64.getEncoder().encodeToString((adminUser + ":" + adminPassword).getBytes(StandardCharsets.UTF_8));
     }
 
+    /** Rows in all tables a wrongly mapped POST /admin/feeds could write to. */
     private int rowCount() {
+        return jdbc.queryForObject("select (select count(*) from feeds.city) + (select count(*) from feeds.feed)"
+                + " + (select count(*) from feeds.feed_source) + (select count(*) from feeds.feed_version)", Integer.class);
+    }
+
+    private int feedCount() {
         return jdbc.queryForObject("select count(*) from feeds.feed", Integer.class);
     }
 
@@ -127,7 +133,7 @@ class AdminRoutesContextTest {
         insert("CtxTieA", today.plusDays(10));
         insert("CtxToday", today);
         insert("CtxTieB", today.plusDays(10));
-        int total = rowCount();
+        int total = feedCount();
 
         String json = mvc.perform(get("/admin/feeds").header(HttpHeaders.AUTHORIZATION, basicAuth()))
                 .andExpect(status().isOk())
@@ -162,7 +168,7 @@ class AdminRoutesContextTest {
 
     @Test
     void statusListTieBreaksByIdEvenWhenTheDatabaseReturnsRowsOutOfIdOrder() throws Exception {
-        // explicit ids inserted in descending order, so a plain findAll() (heap order) returns them high-to-low
+        // explicit ids inserted in descending order, so a plain findAll() (heap order) may return them high-to-low
         LocalDate same = LocalDate.now().plusDays(500);
         insertWithId(9_000_003L, "CtxSameC", same);
         insertWithId(9_000_002L, "CtxSameB", same);
@@ -188,14 +194,32 @@ class AdminRoutesContextTest {
         }
     }
 
+    /** A feed with explicit ids (city id = feed id); with a date it also gets a current version. */
     private void insertWithId(long id, String city, LocalDate expiresOn) {
-        jdbc.update("insert into feeds.feed (id, city_name, company_name, source_id, expires_on) values (?, ?, ?, ?, ?)",
-                id, city, city + "Co", "mdb-ctx-" + city, expiresOn == null ? null : Date.valueOf(expiresOn));
+        jdbc.update("insert into feeds.city (id, name) values (?, ?)", id, city);
+        jdbc.update("insert into feeds.feed (id, city_id, name) values (?, ?, ?)", id, id, city + "Co");
+        if (expiresOn != null) {
+            insertCurrentVersion(id, expiresOn);
+        }
     }
 
+    /**
+     * A feed in its own city. Without a date it has no versions yet ("new"); with a date it gets a current version
+     * whose file_path must never leak into the JSON.
+     */
     private void insert(String city, LocalDate expiresOn) {
-        jdbc.update("insert into feeds.feed (city_name, company_name, source_id, local_path, expires_on) values (?, ?, ?, ?, ?)",
-                city, city + "Co", "mdb-ctx-" + city, "feeds/should-not-leak.zip", expiresOn == null ? null : Date.valueOf(expiresOn));
+        Long cityId = jdbc.queryForObject("insert into feeds.city (name) values (?) returning id", Long.class, city);
+        Long feedId = jdbc.queryForObject("insert into feeds.feed (city_id, name) values (?, ?) returning id", Long.class,
+                cityId, city + "Co");
+        if (expiresOn != null) {
+            insertCurrentVersion(feedId, expiresOn);
+        }
+    }
+
+    private void insertCurrentVersion(long feedId, LocalDate expiresOn) {
+        jdbc.update("insert into feeds.feed_version (feed_id, file_path, expires_on, downloaded_at, status)"
+                        + " values (?, 'feeds/should-not-leak.zip', ?, now(), 'current')",
+                feedId, Date.valueOf(expiresOn));
     }
 
     private static Map<String, Object> byCity(List<Map<String, Object>> list, String city) {

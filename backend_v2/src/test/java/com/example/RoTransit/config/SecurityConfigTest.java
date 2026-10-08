@@ -1,7 +1,14 @@
 package com.example.RoTransit.config;
 
+import com.example.RoTransit.TestEntities;
+import com.example.RoTransit.dto.FeedOperator;
 import com.example.RoTransit.entity.Feed;
+import com.example.RoTransit.entity.FeedVersion;
 import com.example.RoTransit.repository.FeedRepository;
+import com.example.RoTransit.repository.FeedSourceRepository;
+import com.example.RoTransit.repository.FeedVersionRepository;
+import com.example.RoTransit.repository.OperatorRepository;
+import com.example.RoTransit.service.DownloadResult;
 import com.example.RoTransit.service.FeedService;
 import com.example.RoTransit.service.FeedUpdateJob;
 import org.junit.jupiter.api.AfterEach;
@@ -15,7 +22,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.net.URI;
@@ -46,7 +52,7 @@ import static org.mockito.Mockito.when;
 /**
  * SecurityConfig against the REAL filter chain on a real Tomcat (random port), driven by java.net.http.HttpClient
  * (no cookie handler, no redirects), so error dispatches to /error and response headers are exactly what a client sees.
- * FeedRepository, FeedService and FeedUpdateJob are mocks: nothing is read from or written to the DB, nothing downloads.
+ * The feed repositories, FeedService and FeedUpdateJob are mocks: nothing is read from or written to the DB, nothing downloads.
  * The admin password is the test-only value from src/test/resources/config/application.properties.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -65,6 +71,15 @@ class SecurityConfigTest {
     private FeedRepository repo;
 
     @MockitoBean
+    private FeedSourceRepository sources;
+
+    @MockitoBean
+    private FeedVersionRepository versions;
+
+    @MockitoBean
+    private OperatorRepository operators;
+
+    @MockitoBean
     private FeedService feedService;
 
     @MockitoBean
@@ -75,12 +90,14 @@ class SecurityConfigTest {
 
     @BeforeEach
     void stubs() throws Exception {
-        when(repo.findById(1L)).thenReturn(Optional.of(feed(1L, null)));
-        when(repo.findAll()).thenReturn(List.of(feed(1L, null)));               // AdminController sorts in memory
-        when(repo.findAll(Sort.by("id"))).thenReturn(List.of(feed(1L, null)));  // FeedController asks the DB for id order
-        when(repo.save(any(Feed.class))).thenAnswer(inv -> inv.getArgument(0));
+        Feed feed1 = feed(1L, null);
+        when(repo.findById(1L)).thenReturn(Optional.of(feed1));
+        when(repo.findAll()).thenReturn(List.of(feed1));               // AdminController sorts in memory
+        when(repo.findAll(Sort.by("id"))).thenReturn(List.of(feed1));  // FeedController asks the DB for id order
+        when(operators.findCurrentOperatorNames()).thenReturn(List.of(new FeedOperator(1L, "Test Operator")));
         when(feedService.getExpireDate(1L)).thenReturn(LocalDate.of(2027, 12, 9));
-        when(feedService.download(1L)).thenReturn(feed(1L, null));
+        when(feedService.download(1L)).thenReturn(new DownloadResult(TestEntities.current(feed1, null, null), false));
+        when(feedService.createFeed("SecProbe", "SecCo", "mdb-sec")).thenReturn(TestEntities.feed(99L, "SecProbe", "SecCo"));
     }
 
     @AfterEach
@@ -88,14 +105,13 @@ class SecurityConfigTest {
         if (servedFile != null) Files.deleteIfExists(servedFile);
     }
 
-    private static Feed feed(long id, String localPath) {
-        Feed feed = new Feed();
-        ReflectionTestUtils.setField(feed, "id", id);
-        feed.setCityName("Testville");
-        feed.setCompanyName("TestCo");
-        feed.setSourceId("mdb-test");
-        feed.setStatus("downloaded");
-        feed.setLocalPath(localPath);
+    /** A feed; with a filePath it also gets a current version pointing at that file. */
+    private Feed feed(long id, String filePath) {
+        Feed feed = TestEntities.feed(id, "Testville", "TestCo");
+        if (filePath != null) {
+            when(versions.findByFeedIdAndStatus(id, FeedVersion.CURRENT))
+                    .thenReturn(Optional.of(TestEntities.current(feed, filePath, null)));
+        }
         return feed;
     }
 
@@ -139,7 +155,7 @@ class SecurityConfigTest {
             assertThat(r.statusCode()).as("%s %s with %s", method, path, auth).isEqualTo(401);
             assertThat(r.headers().firstValue("WWW-Authenticate")).as("challenge for %s", auth).hasValueSatisfying(v -> assertThat(v).startsWith("Basic realm="));
         }
-        verifyNoInteractions(feedService, feedUpdateJob);
+        verifyNoInteractions(feedService, feedUpdateJob, sources, versions, operators);
         verify(repo, never()).save(any());
         verify(repo, never()).findById(any());
         verify(repo, never()).findAll();
@@ -179,7 +195,7 @@ class SecurityConfigTest {
         HttpResponse<byte[]> create = call("POST", "/admin/feeds", admin());
         assertThat(create.statusCode()).isEqualTo(200);
         assertThat(body(create)).contains("\"cityName\":\"SecProbe\"").contains("\"status\":\"new\"");
-        verify(repo, times(1)).save(any(Feed.class));
+        verify(feedService, times(1)).createFeed("SecProbe", "SecCo", "mdb-sec");
 
         HttpResponse<byte[]> download = call("POST", "/admin/feeds/1/download", admin());
         assertThat(download.statusCode()).isEqualTo(200);
@@ -213,7 +229,7 @@ class SecurityConfigTest {
         HttpResponse<byte[]> r = send("POST", "/admin/feeds", admin(), "application/json", "{\"cityName\": ");
         assertProblem(r, 400, "Bad Request", "/admin/feeds");
         assertThat(body(r)).contains("\"detail\":\"Failed to read request\"");
-        verify(repo, never()).save(any());
+        verify(feedService, never()).createFeed(any(), any(), any());
     }
 
     @Test
@@ -229,7 +245,7 @@ class SecurityConfigTest {
         HttpResponse<byte[]> r = send("POST", "/admin/feeds", admin(), "text/plain", "cityName=x");
         assertProblem(r, 415, "Unsupported Media Type", "/admin/feeds");
         assertThat(body(r)).contains("\"detail\":\"Content-Type 'text/plain").contains("is not supported.\"");
-        verify(repo, never()).save(any());
+        verify(feedService, never()).createFeed(any(), any(), any());
     }
 
     @Test
@@ -268,11 +284,13 @@ class SecurityConfigTest {
         servedFile = FeedService.FEEDS_ROOT.resolve("security-test-" + UUID.randomUUID() + ".zip");
         byte[] bytes = "PK-security-test".getBytes(StandardCharsets.UTF_8);
         Files.write(servedFile, bytes);
-        when(repo.findById(3L)).thenReturn(Optional.of(feed(3L, servedFile.toString())));
+        Feed feed3 = feed(3L, servedFile.toString()); // not inline in thenReturn: feed() stubs a mock itself
+        when(repo.findById(3L)).thenReturn(Optional.of(feed3));
 
         HttpResponse<byte[]> list = call("GET", "/api/feeds", null);
         assertThat(list.statusCode()).isEqualTo(200);
-        assertThat(body(list)).isEqualTo("[{\"id\":1,\"cityName\":\"Testville\",\"companyName\":\"TestCo\"}]");
+        assertThat(body(list)).isEqualTo(
+                "[{\"id\":1,\"cityName\":\"Testville\",\"companyName\":\"TestCo\",\"operators\":[\"Test Operator\"]}]");
         ArgumentCaptor<Sort> sort = ArgumentCaptor.forClass(Sort.class);
         verify(repo).findAll(sort.capture());
         assertThat(sort.getValue()).isEqualTo(Sort.by("id"));
@@ -299,7 +317,7 @@ class SecurityConfigTest {
 
     @Test
     void errorDispatchFromAPublicRouteIsPermittedSoTheRealStatusComesThrough() throws Exception {
-        // localPath null -> ResponseStatusException(404): since GlobalExceptionHandler extends ResponseEntityExceptionHandler
+        // no current version (so no file path) -> ResponseStatusException(404): since GlobalExceptionHandler extends ResponseEntityExceptionHandler
         // the advice renders it as problem+json directly (no ERROR dispatch any more)
         when(repo.findById(4L)).thenReturn(Optional.of(feed(4L, null)));
 

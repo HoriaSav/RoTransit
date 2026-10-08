@@ -1,7 +1,9 @@
 package com.example.RoTransit.service;
 
 import com.example.RoTransit.entity.Feed;
+import com.example.RoTransit.entity.FeedVersion;
 import com.example.RoTransit.repository.FeedRepository;
+import com.example.RoTransit.repository.FeedVersionRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -10,22 +12,22 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import java.util.function.Consumer;
 
+import static com.example.RoTransit.TestEntities.current;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -36,18 +38,31 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * FeedUpdateJob with mocked repository/service. The job decides from the stored expiresOn (and whether the
- * local file exists); it must never open the zip itself (no getExpireDate/readExpireDate calls).
+ * FeedUpdateJob with mocked repositories/service. The job decides from the current version's expiresOn (and whether
+ * its file exists); it must never open the zip itself (no getExpireDate/readExpireDate calls) and never saves
+ * anything itself: FeedService.download stores successes and failures.
  * The job uses LocalDate.now() directly, so dates here are relative to LocalDate.now().
  */
 class FeedUpdateJobTest {
 
     private final FeedRepository repo = mock(FeedRepository.class);
+    private final FeedVersionRepository versions = mock(FeedVersionRepository.class);
     private final FeedService service = mock(FeedService.class);
-    private final FeedUpdateJob job = new FeedUpdateJob(repo, service);
+    private final FeedUpdateJob job = new FeedUpdateJob(repo, versions, service);
+
+    /** Current version of each feed, as findCurrentByFeedId() returns it. */
+    private final Map<Long, FeedVersion> currentVersions = new HashMap<>();
 
     @TempDir
     Path tmp;
+
+    /** By default every download brings a new file; tests that need "unchanged" or a failure stub their own. */
+    @org.junit.jupiter.api.BeforeEach
+    void downloadsAreNewByDefault() throws Exception {
+        when(service.download(anyLong())).thenAnswer(inv -> new DownloadResult(
+                current(com.example.RoTransit.TestEntities.feed(inv.getArgument(0), "X", "XCo"), "feeds/x.zip", null),
+                false));
+    }
 
     /** Guard: an interrupt test must never leak the flag into the next test, even when it fails half-way. */
     @AfterEach
@@ -59,23 +74,23 @@ class FeedUpdateJobTest {
         return Files.createFile(tmp.resolve("present-" + System.nanoTime() + ".zip"));
     }
 
-    private Feed feed(long id, String city, String localPath, LocalDate expiresOn) {
-        Feed feed = new Feed();
-        ReflectionTestUtils.setField(feed, "id", id);
-        feed.setCityName(city);
-        feed.setCompanyName(city + "Co");
-        feed.setSourceId("mdb-" + id);
-        feed.setStatus("downloaded");
-        feed.setLocalPath(localPath);
-        feed.setExpiresOn(expiresOn);
+    /** A feed whose current version has this file path and expiry date. */
+    private Feed feed(long id, String city, String filePath, LocalDate expiresOn) {
+        Feed feed = com.example.RoTransit.TestEntities.feed(id, city, city + "Co");
+        currentVersions.put(id, current(feed, filePath, expiresOn));
         return feed;
     }
 
     private List<String> run(Feed... feeds) {
-        when(repo.findAll()).thenReturn(List.of(feeds));
+        stubFeeds(feeds);
         List<String> lines = new ArrayList<>();
         job.updateFeeds(lines::add);
         return lines;
+    }
+
+    private void stubFeeds(Feed... feeds) {
+        when(repo.findAll()).thenReturn(List.of(feeds));
+        when(versions.findCurrentByFeedId()).thenReturn(currentVersions);
     }
 
     private void verifyZipNeverRead() throws IOException {
@@ -83,15 +98,32 @@ class FeedUpdateJobTest {
         verify(service, never()).readExpireDate(any());
     }
 
+    /** The job only reads; it must never write feeds or versions itself. */
+    private void verifyJobSavedNothing() {
+        verify(repo, never()).save(any());
+        verify(versions, never()).save(any());
+        verify(versions, never()).markCurrentAsOld(anyLong());
+    }
+
     @ParameterizedTest
     @NullAndEmptySource
     @ValueSource(strings = {"   ", "/definitely/not/here/feed.zip"})
-    void missingLocalFileDownloadsEvenWhenExpiryIsFarAway(String localPath) throws Exception {
-        List<String> lines = run(feed(1, "NoFile", localPath, LocalDate.now().plusYears(1)));
+    void missingLocalFileDownloadsEvenWhenExpiryIsFarAway(String filePath) throws Exception {
+        List<String> lines = run(feed(1, "NoFile", filePath, LocalDate.now().plusYears(1)));
 
         assertThat(lines).containsExactly("NoFile has been updated!");
         verify(service, times(1)).download(1L);
         verifyZipNeverRead();
+    }
+
+    @Test
+    void feedWithoutAnyCurrentVersionDownloads() throws Exception {
+        Feed neverDownloaded = com.example.RoTransit.TestEntities.feed(1, "New", "NewCo"); // not in currentVersions
+
+        List<String> lines = run(neverDownloaded);
+
+        assertThat(lines).containsExactly("New has been updated!");
+        verify(service, times(1)).download(1L);
     }
 
     @Test
@@ -129,75 +161,67 @@ class FeedUpdateJobTest {
         assertThat(lines).containsExactly("Fresh is up to date!");
         verify(service, never()).download(anyLong());
         verifyZipNeverRead();
-        verify(repo, never()).save(any());
+        verifyJobSavedNothing();
     }
 
     @Test
-    void downloadFailureSavesStatusFailedOnAFreshCopyOfTheRowAndEmitsOneLine() throws Exception {
-        Feed stale = feed(5, "Broken", null, null);
-        Feed fresh = feed(5, "Broken", null, null);
-        fresh.setExpiresOn(LocalDate.of(2027, 1, 1)); // something only the DB copy knows
-        when(service.download(5L)).thenThrow(new IllegalStateException("boom"));
-        when(repo.findById(5L)).thenReturn(Optional.of(fresh));
+    void currentVersionsAreLoadedOnceForTheWholeRun() throws Exception {
+        String present = existingZip().toString();
+        run(feed(1, "A", present, LocalDate.now().plusDays(30)), feed(2, "B", present, LocalDate.now().plusDays(30)));
 
-        List<String> lines = run(stale);
+        verify(versions, times(1)).findCurrentByFeedId();
+        verify(versions, never()).findByFeedIdAndStatus(anyLong(), any());
+    }
+
+    @Test
+    void downloadFailureEmitsOneLineAndTheJobSavesNothing() throws Exception {
+        // FeedService.download stores the failed attempt itself before rethrowing
+        Feed broken = feed(5, "Broken", null, null);
+        when(service.download(5L)).thenThrow(new IllegalStateException("boom"));
+
+        List<String> lines = run(broken);
 
         assertThat(lines).containsExactly("Broken failed, boom");
-        verify(repo, times(1)).save(same(fresh));
-        verify(repo, never()).save(same(stale));
-        assertThat(fresh.getStatus()).isEqualTo("failed");
-        assertThat(fresh.getExpiresOn()).isEqualTo(LocalDate.of(2027, 1, 1));
-        assertThat(stale.getStatus()).isEqualTo("downloaded");
-    }
-
-    @Test
-    void downloadFailureForARowDeletedMeanwhileStillEmitsOneLineAndSavesNothing() throws Exception {
-        when(service.download(5L)).thenThrow(new IllegalStateException("boom"));
-        when(repo.findById(5L)).thenReturn(Optional.empty());
-
-        List<String> lines = run(feed(5, "Gone", null, null));
-
-        assertThat(lines).containsExactly("Gone failed, boom");
-        verify(repo, never()).save(any());
+        verifyJobSavedNothing();
+        assertThat(currentVersions.get(5L).getStatus()).isEqualTo(FeedVersion.CURRENT);
     }
 
     @Test
     void consumerFailureOnAnUpToDateFeedNeverMarksItFailedOrSaves() throws Exception {
         Feed fresh = feed(3, "Fresh", existingZip().toString(), LocalDate.now().plusDays(30));
         Feed next = feed(4, "Next", existingZip().toString(), LocalDate.now().plusDays(30));
-        when(repo.findAll()).thenReturn(List.of(fresh, next));
+        stubFeeds(fresh, next);
 
         assertThatThrownBy(() -> job.updateFeeds(line -> { throw new RuntimeException("Broken pipe"); }))
                 .hasMessage("Broken pipe");
 
-        // the client is gone: the run stops, nothing is persisted, the feed keeps its status
-        verify(repo, never()).save(any());
+        // the client is gone: the run stops, nothing is persisted, the version keeps its status
+        verifyJobSavedNothing();
         verify(repo, never()).findById(anyLong());
-        assertThat(fresh.getStatus()).isEqualTo("downloaded");
+        assertThat(currentVersions.get(3L).getStatus()).isEqualTo(FeedVersion.CURRENT);
         verify(service, never()).download(anyLong());
     }
 
     @Test
     void consumerFailureAfterASuccessfulDownloadDoesNotSaveFromTheJob() throws Exception {
         Feed noExpiry = feed(1, "NoExpiry", existingZip().toString(), null);
-        when(repo.findAll()).thenReturn(List.of(noExpiry));
+        stubFeeds(noExpiry);
 
         assertThatThrownBy(() -> job.updateFeeds(line -> { throw new RuntimeException("Broken pipe"); }))
                 .hasMessage("Broken pipe");
 
         verify(service, times(1)).download(1L);
-        verify(repo, never()).save(any());
+        verifyJobSavedNothing();
         verify(repo, never()).findById(anyLong());
-        assertThat(noExpiry.getStatus()).isEqualTo("downloaded");
     }
 
     @Test
     void successfulDownloadIsNotSavedAgainByTheJob() throws Exception {
-        // FeedService.download saves the updated feed itself; the job must not overwrite it with its stale copy
+        // FeedService.download saves the new version itself; the job must not save anything on top of it
         run(feed(1, "NoExpiry", existingZip().toString(), null));
 
         verify(service, times(1)).download(1L);
-        verify(repo, never()).save(any());
+        verifyJobSavedNothing();
     }
 
     @Test
@@ -209,9 +233,7 @@ class FeedUpdateJobTest {
         Feed expiring = feed(4, "Expiring", present, LocalDate.now().plusDays(2));
         Feed downloadFails = feed(5, "DownloadFails", null, null);
         Feed fresh2 = feed(6, "Fresh2", present, LocalDate.now().plusYears(2));
-        Feed downloadFailsFromDb = feed(5, "DownloadFails", null, null);
         when(service.download(5L)).thenThrow(new IllegalStateException("source returned 403"));
-        when(repo.findById(5L)).thenReturn(Optional.of(downloadFailsFromDb));
 
         List<String> lines = run(missingPath, noExpiry, fresh, expiring, downloadFails, fresh2);
 
@@ -229,14 +251,26 @@ class FeedUpdateJobTest {
         verify(service).download(5L);
         verify(service, never()).download(6L);
         verifyZipNeverRead();
-        verify(repo, times(1)).save(same(downloadFailsFromDb));
-        assertThat(downloadFailsFromDb.getStatus()).isEqualTo("failed");
-        assertThat(fresh.getStatus()).isEqualTo("downloaded");
+        verifyJobSavedNothing();
+    }
+
+    @Test
+    void sameFileFromTheSourceIsReportedAsUnchangedNotAsUpdated() throws Exception {
+        Feed expiring = feed(1, "Same", existingZip().toString(), LocalDate.now().plusDays(2));
+        Feed fresh = feed(2, "Fresh", existingZip().toString(), LocalDate.now().plusDays(30));
+        Feed changed = feed(3, "Changed", null, null);
+        when(service.download(1L)).thenReturn(new DownloadResult(currentVersions.get(1L), true));
+
+        List<String> lines = run(expiring, fresh, changed);
+
+        // "is up to date!" = no download needed; "is unchanged" = we downloaded, but the source has nothing newer
+        assertThat(lines).containsExactly("Same is unchanged", "Fresh is up to date!", "Changed has been updated!");
+        verifyJobSavedNothing();
     }
 
     @Test
     void scheduledVariantRunsSameLogicWithoutConsumer() throws Exception {
-        when(repo.findAll()).thenReturn(List.of(feed(1, "NoPath", null, null)));
+        stubFeeds(feed(1, "NoPath", null, null));
 
         job.updateFeedsScheduled();
 
@@ -279,8 +313,8 @@ class FeedUpdateJobTest {
     @Test
     void interruptOnTheSecondFeedStopsTheRunReportsItOnceAndRestoresTheFlag() throws Exception {
         Feed[] f = threeFeedsThatAllNeedADownload();
-        when(repo.findAll()).thenReturn(List.of(f));
-        when(service.download(1L)).thenReturn(f[0]);
+        stubFeeds(f);
+        when(service.download(1L)).thenReturn(new DownloadResult(currentVersions.get(1L), false));
         when(service.download(2L)).thenThrow(new InterruptedException("shutdown"));
         Consumer<String> onResult = consumer();
         assertThat(Thread.currentThread().isInterrupted()).isFalse();
@@ -291,25 +325,24 @@ class FeedUpdateJobTest {
         ArgumentCaptor<String> lines = ArgumentCaptor.forClass(String.class);
         verify(onResult, times(2)).accept(lines.capture());
         assertThat(lines.getAllValues()).containsExactly("Cluj has been updated!", "Iasi interrupted, update stopped");
-        InOrder order = inOrder(repo, service, onResult);
+        InOrder order = inOrder(versions, repo, service, onResult);
+        order.verify(versions).findCurrentByFeedId();
         order.verify(repo).findAll();
         order.verify(service).download(1L);
         order.verify(onResult).accept("Cluj has been updated!");
         order.verify(service).download(2L);
         order.verify(onResult).accept("Iasi interrupted, update stopped");
         verify(service, never()).download(3L);
-        // the job itself marks nothing failed: FeedService.download already saved #2 as failed before rethrowing
-        verify(repo, never()).findById(anyLong());
-        verify(repo, never()).save(any());
-        verifyNoMoreInteractions(repo, service, onResult);
-        assertThat(f[1].getStatus()).isEqualTo("downloaded");
-        assertThat(f[2].getStatus()).isEqualTo("downloaded");
+        // the job itself marks nothing failed: FeedService.download already stored #2's failure before rethrowing
+        verifyNoMoreInteractions(repo, versions, service, onResult);
+        assertThat(currentVersions.get(2L).getStatus()).isEqualTo(FeedVersion.CURRENT);
+        assertThat(currentVersions.get(3L).getStatus()).isEqualTo(FeedVersion.CURRENT);
     }
 
     @Test
     void interruptOnTheFirstFeedEmitsOneLineAndDownloadsNothingAfterIt() throws Exception {
         Feed[] f = threeFeedsThatAllNeedADownload();
-        when(repo.findAll()).thenReturn(List.of(f));
+        stubFeeds(f);
         when(service.download(1L)).thenThrow(new InterruptedException("shutdown"));
         Consumer<String> onResult = consumer();
 
@@ -321,16 +354,15 @@ class FeedUpdateJobTest {
         verify(service, never()).download(2L);
         verify(service, never()).download(3L);
         verify(repo).findAll();
-        verifyNoMoreInteractions(repo, service, onResult);
+        verify(versions).findCurrentByFeedId();
+        verifyNoMoreInteractions(repo, versions, service, onResult);
     }
 
     @Test
     void plainExceptionOnTheSecondFeedStillContinuesToTheThirdAndLeavesNoInterruptFlag() throws Exception {
         Feed[] f = threeFeedsThatAllNeedADownload();
-        Feed iasiFromDb = feed(2, "Iasi", f[1].getLocalPath(), f[1].getExpiresOn());
-        when(repo.findAll()).thenReturn(List.of(f));
+        stubFeeds(f);
         when(service.download(2L)).thenThrow(new IOException("connection reset"));
-        when(repo.findById(2L)).thenReturn(Optional.of(iasiFromDb));
         Consumer<String> onResult = consumer();
 
         boolean flagAfter = runAndTakeInterruptFlag(onResult);
@@ -340,20 +372,18 @@ class FeedUpdateJobTest {
         verify(onResult, times(3)).accept(lines.capture());
         assertThat(lines.getAllValues()).containsExactly(
                 "Cluj has been updated!", "Iasi failed, connection reset", "Brasov has been updated!");
-        InOrder order = inOrder(service, repo);
+        InOrder order = inOrder(service);
         order.verify(service).download(1L);
         order.verify(service).download(2L);
-        order.verify(repo).findById(2L);
-        order.verify(repo).save(same(iasiFromDb));
         order.verify(service).download(3L);
-        assertThat(iasiFromDb.getStatus()).isEqualTo("failed");
-        assertThat(f[1].getStatus()).isEqualTo("downloaded");
+        verifyJobSavedNothing();
+        assertThat(currentVersions.get(2L).getStatus()).isEqualTo(FeedVersion.CURRENT);
     }
 
     @Test
     void scheduledRunStopsOnInterruptReturnsNormallyAndLeavesTheFlagSet() throws Exception {
         Feed[] f = threeFeedsThatAllNeedADownload();
-        when(repo.findAll()).thenReturn(List.of(f));
+        stubFeeds(f);
         when(service.download(2L)).thenThrow(new InterruptedException("shutdown"));
 
         boolean flagAfter;
@@ -367,6 +397,6 @@ class FeedUpdateJobTest {
         verify(service).download(1L);
         verify(service).download(2L);
         verify(service, never()).download(3L);
-        verify(repo, never()).save(any());
+        verifyJobSavedNothing();
     }
 }

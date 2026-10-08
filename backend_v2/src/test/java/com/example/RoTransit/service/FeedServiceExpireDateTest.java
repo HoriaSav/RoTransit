@@ -1,10 +1,15 @@
 package com.example.RoTransit.service;
 
+import com.example.RoTransit.TestEntities;
 import com.example.RoTransit.entity.Feed;
+import com.example.RoTransit.entity.FeedVersion;
+import com.example.RoTransit.repository.CityRepository;
 import com.example.RoTransit.repository.FeedRepository;
+import com.example.RoTransit.repository.FeedSourceRepository;
+import com.example.RoTransit.repository.FeedVersionRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -29,7 +34,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * FeedService.getExpireDate on small zips built in a @TempDir (no DB, no network).
- * The repository is mocked to return a Feed whose localPath points at the temp zip.
+ * The repositories are mocked to return a feed whose current version's filePath points at the temp zip.
  */
 class FeedServiceExpireDateTest {
 
@@ -37,7 +42,9 @@ class FeedServiceExpireDateTest {
     private static final String CAL_DATES = "service_id,date,exception_type\n";
 
     private final FeedRepository repo = mock(FeedRepository.class);
-    private final FeedService service = new FeedService(repo);
+    private final FeedVersionRepository versions = mock(FeedVersionRepository.class);
+    private final FeedService service = new FeedService(repo, mock(CityRepository.class),
+            mock(FeedSourceRepository.class), versions, mock(FeedVersionService.class));
 
     @TempDir
     Path tmp;
@@ -58,12 +65,22 @@ class FeedServiceExpireDateTest {
         return zip;
     }
 
-    private LocalDate expiryOf(String localPath) throws IOException {
-        Feed feed = new Feed();
-        ReflectionTestUtils.setField(feed, "id", 1L);
-        feed.setLocalPath(localPath);
+    private LocalDate expiryOf(String filePath) throws IOException {
+        Feed feed = TestEntities.feed(1L, "Testville", "TestCo");
         when(repo.findById(1L)).thenReturn(Optional.of(feed));
+        when(versions.findByFeedIdAndStatus(1L, FeedVersion.CURRENT))
+                .thenReturn(Optional.of(TestEntities.current(feed, filePath, null)));
         return service.getExpireDate(1L);
+    }
+
+    @Test
+    void feedWithoutACurrentVersionGives404() {
+        when(repo.findById(1L)).thenReturn(Optional.of(TestEntities.feed(1L, "Testville", "TestCo")));
+        when(versions.findByFeedIdAndStatus(1L, FeedVersion.CURRENT)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getExpireDate(1L))
+                .isInstanceOf(ResponseStatusException.class)
+                .satisfies(e -> assertThat(((ResponseStatusException) e).getStatusCode().value()).isEqualTo(404));
     }
 
     private static Map<String, String> files(String... nameContentPairs) {

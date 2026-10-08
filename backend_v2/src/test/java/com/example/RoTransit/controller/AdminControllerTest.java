@@ -1,15 +1,18 @@
 package com.example.RoTransit.controller;
 
+import com.example.RoTransit.TestEntities;
 import com.example.RoTransit.entity.Feed;
+import com.example.RoTransit.entity.FeedVersion;
 import com.example.RoTransit.repository.FeedRepository;
+import com.example.RoTransit.repository.FeedSourceRepository;
+import com.example.RoTransit.repository.FeedVersionRepository;
+import com.example.RoTransit.service.DownloadResult;
 import com.example.RoTransit.service.FeedService;
 import com.example.RoTransit.service.FeedUpdateJob;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -17,11 +20,15 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.function.Consumer;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.hamcrest.Matchers.aMapWithSize;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasKey;
@@ -50,32 +57,38 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class AdminControllerTest {
 
     private final FeedRepository repo = mock(FeedRepository.class);
+    private final FeedSourceRepository sources = mock(FeedSourceRepository.class);
+    private final FeedVersionRepository versions = mock(FeedVersionRepository.class);
     private final FeedService feedService = mock(FeedService.class);
     private final FeedUpdateJob feedUpdateJob = mock(FeedUpdateJob.class);
     private MockMvc mvc;
 
+    /** What the mocked repositories return for the list: feeds, their current versions and their latest attempts. */
+    private final List<Feed> feedList = new ArrayList<>();
+    private final Map<Long, FeedVersion> currentVersions = new HashMap<>();
+    private final Map<Long, FeedVersion> latestVersions = new HashMap<>();
+
     @BeforeEach
     void setUp() {
-        mvc = MockMvcBuilders.standaloneSetup(new AdminController(repo, feedService, feedUpdateJob)).build();
+        mvc = MockMvcBuilders.standaloneSetup(new AdminController(repo, sources, versions, feedService, feedUpdateJob)).build();
+        when(repo.findAll()).thenReturn(feedList);
+        when(versions.findCurrentByFeedId()).thenReturn(currentVersions);
+        when(versions.findLatestByFeedId()).thenReturn(latestVersions);
     }
 
-    private Feed feed(long id, String localPath) {
-        Feed feed = new Feed();
-        ReflectionTestUtils.setField(feed, "id", id);
-        feed.setCityName("Testville");
-        feed.setCompanyName("TestCo");
-        feed.setSourceId("mdb-test");
-        feed.setStatus("downloaded");
-        feed.setLocalPath(localPath);
-        return feed;
-    }
-
+    /** A downloaded feed (current version = latest attempt) that shows up in the list, also stubbed for /admin/feeds/{id}. */
     private Feed feed(long id, String city, LocalDate expiresOn) {
-        Feed feed = feed(id, "feeds/" + id + ".zip");
-        feed.setCityName(city);
-        feed.setCompanyName(city + "Co");
-        feed.setExpiresOn(expiresOn);
-        feed.setDownloadedAt(Instant.parse("2026-10-0" + (id % 9 + 1) + "T08:00:00Z"));
+        Feed feed = TestEntities.feed(id, city, city + "Co");
+        FeedVersion current = TestEntities.current(feed, "feeds/" + id + ".zip", expiresOn);
+        current.setDownloadedAt(Instant.parse("2026-10-0" + (id % 9 + 1) + "T08:00:00Z"));
+        current.setSource(TestEntities.mobilityDbSource(feed, "mdb-" + id));
+        feedList.add(feed);
+        currentVersions.put(id, current);
+        latestVersions.put(id, current);
+        when(repo.findById(id)).thenReturn(Optional.of(feed));
+        when(sources.findByFeedIdAndPriority(id, 1)).thenReturn(Optional.of(current.getSource()));
+        when(versions.findByFeedIdAndStatus(id, FeedVersion.CURRENT)).thenReturn(Optional.of(current));
+        when(versions.findFirstByFeedIdOrderByIdDesc(id)).thenReturn(Optional.of(current));
         return feed;
     }
 
@@ -102,67 +115,108 @@ class AdminControllerTest {
     }
 
     @Test
-    void createFeedIgnoresLocalPathAndStatusFromRequestBody() throws Exception {
-        when(repo.save(any(Feed.class))).thenAnswer(inv -> {
-            Feed saved = inv.getArgument(0);
-            ReflectionTestUtils.setField(saved, "id", 42L);
-            return saved;
-        });
+    void createFeedPassesOnlyCityCompanyAndSourceAndIgnoresSpoofedFields() throws Exception {
+        Feed created = TestEntities.feed(42L, "Probe", "ProbeCo");
+        when(feedService.createFeed("Probe", "ProbeCo", "mdb-probe")).thenReturn(created);
+        when(sources.findByFeedIdAndPriority(42L, 1))
+                .thenReturn(Optional.of(TestEntities.mobilityDbSource(created, "mdb-probe")));
 
         mvc.perform(post("/admin/feeds")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"cityName":"Probe","companyName":"ProbeCo","sourceId":"mdb-probe",
-                                 "localPath":"/etc/passwd","status":"hacked","id":5}
+                                 "localPath":"/etc/passwd","filePath":"/etc/passwd","status":"hacked","id":5}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(42))
                 .andExpect(jsonPath("$.cityName").value("Probe"))
                 .andExpect(jsonPath("$.companyName").value("ProbeCo"))
                 .andExpect(jsonPath("$.sourceId").value("mdb-probe"))
-                .andExpect(jsonPath("$.status").value("new"))
-                .andExpect(jsonPath("$.localPath").doesNotExist());
+                .andExpect(jsonPath("$.sourceUrl").value(nullValue()))
+                .andExpect(jsonPath("$.status").value("new")) // no versions yet, not the "hacked" value from the body
+                .andExpect(jsonPath("$.downloadedAt").value(nullValue()))
+                .andExpect(jsonPath("$.localPath").doesNotExist())
+                .andExpect(jsonPath("$.filePath").doesNotExist());
 
-        ArgumentCaptor<Feed> captor = ArgumentCaptor.forClass(Feed.class);
-        verify(repo).save(captor.capture());
-        Feed saved = captor.getValue();
-        assertThat(saved.getLocalPath()).isNull();
-        assertThat(saved.getStatus()).isEqualTo("new"); // entity default, not the "hacked" value from the body
-        assertThat(saved.getSourceId()).isEqualTo("mdb-probe");
-        assertThat(saved.getDownloadedAt()).isNotNull();
+        // only these three values reach the service; the spoofed fields have nowhere to go
+        verify(feedService).createFeed("Probe", "ProbeCo", "mdb-probe");
     }
 
     @Test
     void feedJsonNeverExposesLocalPath() throws Exception {
-        when(repo.findById(3L)).thenReturn(Optional.of(feed(3L, "feeds/3.zip")));
-        when(repo.findAll()).thenReturn(List.of(feed(3L, "feeds/3.zip")));
+        feed(3L, "Testville", LocalDate.of(2027, 1, 1));
 
         mvc.perform(get("/admin/feeds/3"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(3))
-                .andExpect(jsonPath("$.localPath").doesNotExist());
+                .andExpect(jsonPath("$.localPath").doesNotExist())
+                .andExpect(jsonPath("$.filePath").doesNotExist());
         // GET /feeds is gone; the admin list (FeedStatus) is the replacement
         mvc.perform(get("/admin/feeds"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
-                .andExpect(jsonPath("$[0].localPath").doesNotExist());
+                .andExpect(jsonPath("$[0].localPath").doesNotExist())
+                .andExpect(jsonPath("$[0].filePath").doesNotExist());
+    }
+
+    @Test
+    void feedDetailsHaveTheOldFeedFieldsFromTheCurrentVersion() throws Exception {
+        feed(3L, "Testville", LocalDate.of(2027, 1, 1));
+        currentVersions.get(3L).setStartsOn(LocalDate.of(2026, 9, 1));
+
+        mvc.perform(get("/admin/feeds/3"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", aMapWithSize(9)))
+                .andExpect(jsonPath("$.cityName").value("Testville"))
+                .andExpect(jsonPath("$.companyName").value("TestvilleCo"))
+                .andExpect(jsonPath("$.sourceId").value("mdb-3"))
+                .andExpect(jsonPath("$.sourceUrl").value("https://files.mobilitydatabase.org/mdb-3/latest.zip"))
+                .andExpect(jsonPath("$.status").value("downloaded"))
+                .andExpect(jsonPath("$.downloadedAt").value("2026-10-04T08:00:00Z"))
+                .andExpect(jsonPath("$.startsOn").value("2026-09-01"))
+                .andExpect(jsonPath("$.expiresOn").value("2027-01-01"));
+    }
+
+    @Test
+    void unknownFeedIdIsNotFound() {
+        when(repo.findById(99L)).thenReturn(Optional.empty());
+
+        // standalone MockMvc has no GlobalExceptionHandler, so the NoSuchElementException surfaces as is
+        assertThatThrownBy(() -> mvc.perform(get("/admin/feeds/99")))
+                .hasRootCauseInstanceOf(NoSuchElementException.class);
     }
 
     // ---- download / expires ----
 
     @Test
-    void downloadReturnsTheSavedFeedWithoutLocalPath() throws Exception {
-        Feed downloaded = feed(4L, "feeds/4.zip");
-        downloaded.setExpiresOn(LocalDate.of(2027, 12, 31));
-        when(feedService.download(4L)).thenReturn(downloaded);
+    void downloadReturnsTheFeedWithItsNewCurrentVersionWithoutLocalPath() throws Exception {
+        Feed feed = feed(4L, "Testville", LocalDate.of(2027, 12, 31));
+        when(feedService.download(4L)).thenReturn(new DownloadResult(currentVersions.get(4L), false));
 
         mvc.perform(post("/admin/feeds/4/download"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(4))
                 .andExpect(jsonPath("$.status").value("downloaded"))
+                .andExpect(jsonPath("$.unchanged").value(false))
                 .andExpect(jsonPath("$.expiresOn").value("2027-12-31"))
-                .andExpect(jsonPath("$.localPath").doesNotExist());
-        verify(feedService).download(4L);
+                .andExpect(jsonPath("$.localPath").doesNotExist())
+                .andExpect(jsonPath("$.filePath").doesNotExist());
+        verify(feedService).download(feed.getId());
+    }
+
+    @Test
+    void downloadOfTheSameFileSaysUnchanged() throws Exception {
+        feed(4L, "Testville", LocalDate.of(2027, 12, 31));
+        when(feedService.download(4L)).thenReturn(new DownloadResult(currentVersions.get(4L), true));
+
+        mvc.perform(post("/admin/feeds/4/download"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.unchanged").value(true))
+                .andExpect(jsonPath("$.status").value("downloaded"))
+                .andExpect(jsonPath("$.expiresOn").value("2027-12-31"));
+        // only the download response has the field
+        mvc.perform(get("/admin/feeds/4"))
+                .andExpect(jsonPath("$.unchanged").doesNotExist());
     }
 
     @Test
@@ -172,7 +226,9 @@ class AdminControllerTest {
 
         mvc.perform(post("/admin/feeds/5/download"))
                 .andExpect(status().isBadGateway());
+        // the controller writes nothing itself; FeedService stores the failed attempt
         verify(repo, never()).save(any());
+        verify(versions, never()).save(any());
     }
 
     @Test
@@ -191,10 +247,7 @@ class AdminControllerTest {
     @Test
     void statusListHasExactlyTheFeedStatusFieldsWithCorrectValues() throws Exception {
         LocalDate today = LocalDate.now();
-        Feed f = feed(7L, "Sibiu", today.plusDays(30));
-        f.setStatus("downloaded");
-        f.setSourceUrl("https://files.mobilitydatabase.org/mdb-7/latest.zip");
-        when(repo.findAll()).thenReturn(List.of(f));
+        feed(7L, "Sibiu", today.plusDays(30));
 
         mvc.perform(get("/admin/feeds"))
                 .andExpect(status().isOk())
@@ -216,11 +269,10 @@ class AdminControllerTest {
     @Test
     void daysLeftIsDaysFromTodayNegativeWhenExpiredAndNullWithoutExpiry() throws Exception {
         LocalDate today = LocalDate.now();
-        when(repo.findAll()).thenReturn(List.of(
-                feed(1L, "Future", today.plusDays(400)),
-                feed(2L, "Today", today),
-                feed(3L, "Past", today.minusDays(3)),
-                feed(4L, "Unknown", null)));
+        feed(1L, "Future", today.plusDays(400));
+        feed(2L, "Today", today);
+        feed(3L, "Past", today.minusDays(3));
+        feed(4L, "Unknown", null);
 
         mvc.perform(get("/admin/feeds"))
                 .andExpect(status().isOk())
@@ -236,14 +288,13 @@ class AdminControllerTest {
     @Test
     void statusListIsNullsFirstThenExpiresOnAscendingWithTiesById() throws Exception {
         LocalDate today = LocalDate.now();
-        when(repo.findAll()).thenReturn(List.of(
-                feed(1L, "A", today.plusDays(10)),
-                feed(2L, "B", null),
-                feed(3L, "C", today.minusDays(3)),
-                feed(4L, "D", today.plusDays(10)),
-                feed(5L, "E", null),
-                feed(6L, "F", today),
-                feed(7L, "G", today.plusDays(2))));
+        feed(1L, "A", today.plusDays(10));
+        feed(2L, "B", null);
+        feed(3L, "C", today.minusDays(3));
+        feed(4L, "D", today.plusDays(10));
+        feed(5L, "E", null);
+        feed(6L, "F", today);
+        feed(7L, "G", today.plusDays(2));
 
         mvc.perform(get("/admin/feeds"))
                 .andExpect(status().isOk())
@@ -258,14 +309,13 @@ class AdminControllerTest {
         LocalDate today = LocalDate.now();
         LocalDate same = today.plusDays(20);
         // reverse / shuffled id order on purpose: two nulls, three on the same date, one earlier, one later
-        when(repo.findAll()).thenReturn(List.of(
-                feed(9L, "I", same),
-                feed(8L, "H", null),
-                feed(7L, "G", today.plusDays(40)),
-                feed(3L, "C", same),
-                feed(6L, "F", null),
-                feed(5L, "E", same),
-                feed(1L, "A", today.plusDays(1))));
+        feed(9L, "I", same);
+        feed(8L, "H", null);
+        feed(7L, "G", today.plusDays(40));
+        feed(3L, "C", same);
+        feed(6L, "F", null);
+        feed(5L, "E", same);
+        feed(1L, "A", today.plusDays(1));
 
         mvc.perform(get("/admin/feeds"))
                 .andExpect(status().isOk())
@@ -275,10 +325,46 @@ class AdminControllerTest {
 
     @Test
     void emptyRepositoryGivesEmptyStatusList() throws Exception {
-        when(repo.findAll()).thenReturn(List.of());
-
+        // no feeds added
         mvc.perform(get("/admin/feeds"))
                 .andExpect(status().isOk())
                 .andExpect(content().json("[]"));
+    }
+
+    @Test
+    void statusIsFailedWhenTheLatestAttemptFailedButDatesStayFromTheCurrentVersion() throws Exception {
+        LocalDate expires = LocalDate.now().plusDays(30);
+        Feed feed = feed(7L, "Sibiu", expires);
+        latestVersions.put(7L, TestEntities.version(701L, feed, FeedVersion.FAILED, null, null));
+
+        mvc.perform(get("/admin/feeds"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].status").value("failed"))
+                .andExpect(jsonPath("$[0].downloadedAt").value("2026-10-08T08:00:00Z"))
+                .andExpect(jsonPath("$[0].expiresOn").value(expires.toString()))
+                .andExpect(jsonPath("$[0].daysLeft").value(30));
+    }
+
+    @Test
+    void feedWithoutVersionsIsNewWithNullDates() throws Exception {
+        feedList.add(TestEntities.feed(8L, "Fresh", "FreshCo"));
+
+        mvc.perform(get("/admin/feeds"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].status").value("new"))
+                .andExpect(jsonPath("$[0].downloadedAt").value(nullValue()))
+                .andExpect(jsonPath("$[0].expiresOn").value(nullValue()))
+                .andExpect(jsonPath("$[0].daysLeft").value(nullValue()));
+    }
+
+    @Test
+    void neverSucceededFeedWithAFailedAttemptIsFailed() throws Exception {
+        Feed feed = TestEntities.feed(9L, "Broken", "BrokenCo");
+        feedList.add(feed);
+        latestVersions.put(9L, TestEntities.version(901L, feed, FeedVersion.FAILED, null, null));
+
+        mvc.perform(get("/admin/feeds"))
+                .andExpect(jsonPath("$[0].status").value("failed"))
+                .andExpect(jsonPath("$[0].expiresOn").value(nullValue()));
     }
 }

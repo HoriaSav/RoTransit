@@ -2,9 +2,15 @@ package com.example.RoTransit.exception;
 
 import com.example.RoTransit.controller.AdminController;
 import com.example.RoTransit.controller.FeedController;
+import com.example.RoTransit.TestEntities;
+import com.example.RoTransit.repository.CityRepository;
 import com.example.RoTransit.repository.FeedRepository;
+import com.example.RoTransit.repository.FeedSourceRepository;
+import com.example.RoTransit.repository.FeedVersionRepository;
+import com.example.RoTransit.repository.OperatorRepository;
 import com.example.RoTransit.service.FeedService;
 import com.example.RoTransit.service.FeedUpdateJob;
+import com.example.RoTransit.service.FeedVersionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -37,20 +43,24 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * GlobalExceptionHandler wired into a standalone MockMvc (no Spring context, no DB, no network).
- * The real FeedService is used with a mocked repository, so the unknown-id path runs the real
+ * The real FeedService is used with mocked repositories, so the unknown-id path runs the real
  * findById(..).orElseThrow() in both the controller and the service.
  */
 class GlobalExceptionHandlerTest {
 
     private final FeedRepository repo = mock(FeedRepository.class);
+    private final FeedSourceRepository sources = mock(FeedSourceRepository.class);
+    private final FeedVersionRepository versions = mock(FeedVersionRepository.class);
+    private final FeedVersionService versionService = mock(FeedVersionService.class);
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         when(repo.findById(anyLong())).thenReturn(Optional.empty());
-        FeedService realService = new FeedService(repo);
+        FeedService realService = new FeedService(repo, mock(CityRepository.class), sources, versions, versionService);
         mvc = MockMvcBuilders
-                .standaloneSetup(new FeedController(repo), new AdminController(repo, realService, mock(FeedUpdateJob.class)))
+                .standaloneSetup(new FeedController(repo, versions, mock(OperatorRepository.class)),
+                        new AdminController(repo, sources, versions, realService, mock(FeedUpdateJob.class)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -85,6 +95,9 @@ class GlobalExceptionHandlerTest {
                         .noneMatch(name -> name.startsWith("987654-"));
             }
         }
+        // an unknown feed is not a failed download: nothing is stored
+        verify(versionService, never()).saveFailed(any(), any(), any());
+        verify(versionService, never()).saveAsCurrent(any(), any());
     }
 
     @Test
@@ -92,7 +105,7 @@ class GlobalExceptionHandlerTest {
         FeedService service = mock(FeedService.class);
         when(service.download(5L)).thenThrow(new ResponseStatusException(HttpStatus.BAD_GATEWAY, "source returned 403"));
         MockMvc mvc502 = MockMvcBuilders
-                .standaloneSetup(new AdminController(repo, service, mock(FeedUpdateJob.class)))
+                .standaloneSetup(new AdminController(repo, sources, versions, service, mock(FeedUpdateJob.class)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
 
@@ -108,7 +121,7 @@ class GlobalExceptionHandlerTest {
                 "source sent an invalid zip for https://files.mobilitydatabase.org/mdb-x/latest.zip",
                 new java.util.zip.ZipException("zip END header not found")));
         MockMvc mvc502 = MockMvcBuilders
-                .standaloneSetup(new AdminController(repo, service, mock(FeedUpdateJob.class)))
+                .standaloneSetup(new AdminController(repo, sources, versions, service, mock(FeedUpdateJob.class)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
 
@@ -124,7 +137,7 @@ class GlobalExceptionHandlerTest {
         FeedService service = mock(FeedService.class);
         when(service.getExpireDate(5L)).thenThrow(new IllegalStateException("feed_info.txt is missing"));
         MockMvc mvcIse = MockMvcBuilders
-                .standaloneSetup(new AdminController(repo, service, mock(FeedUpdateJob.class)))
+                .standaloneSetup(new AdminController(repo, sources, versions, service, mock(FeedUpdateJob.class)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
 
@@ -153,6 +166,7 @@ class GlobalExceptionHandlerTest {
                 .andExpectAll(problem(400, "Bad Request", "/admin/feeds"))
                 .andExpect(jsonPath("$.detail").value("Failed to read request"));
         verify(repo, never()).save(any());
+        verify(sources, never()).save(any());
     }
 
     @Test
@@ -187,7 +201,7 @@ class GlobalExceptionHandlerTest {
         FeedService service = mock(FeedService.class);
         when(service.download(5L)).thenThrow(new ResponseStatusException(HttpStatus.BAD_GATEWAY, "source returned 403 for https://files.mobilitydatabase.org/mdb-x/latest.zip"));
         MockMvc mvc502 = MockMvcBuilders
-                .standaloneSetup(new AdminController(repo, service, mock(FeedUpdateJob.class)))
+                .standaloneSetup(new AdminController(repo, sources, versions, service, mock(FeedUpdateJob.class)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
 
@@ -199,9 +213,8 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void responseStatusException404WithoutReasonIsProblemJson() throws Exception {
-        com.example.RoTransit.entity.Feed noFile = new com.example.RoTransit.entity.Feed();
-        org.springframework.test.util.ReflectionTestUtils.setField(noFile, "id", 7L);
-        when(repo.findById(7L)).thenReturn(Optional.of(noFile)); // localPath null -> ResponseStatusException(NOT_FOUND)
+        // a feed that was never downloaded: no current version -> ResponseStatusException(NOT_FOUND)
+        when(repo.findById(7L)).thenReturn(Optional.of(TestEntities.feed(7L, "Testville", "TestCo")));
 
         mvc.perform(get("/api/feeds/7/file"))
                 .andExpect(status().isNotFound())

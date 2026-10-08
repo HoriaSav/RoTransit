@@ -8,34 +8,38 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 
-/** A GTFS dataset served for a city. Its files live in FeedVersion, where to get them in FeedSource. */
+/** A transit operator (one row of agency.txt) inside a downloaded feed version. */
 @Entity
-public class Feed {
+public class Operator {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // LAZY: the city is only loaded when it is used. Lists load it up front with an @EntityGraph (FeedRepository).
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "city_id")
-    private City city;
+    @JoinColumn(name = "feed_version_id")
+    private FeedVersion feedVersion;
 
+    private String agencyId;
     private String name;
+    private String url;
 
     public Long getId() {
         return id;
     }
 
-    public City getCity() {
-        return city;
+    public FeedVersion getFeedVersion() {
+        return feedVersion;
     }
-    public void setCity(City city) {
-        this.city = city;
+    public void setFeedVersion(FeedVersion feedVersion) {
+        this.feedVersion = feedVersion;
     }
 
-    public String getCityName() {
-        return city.getName();
+    public String getAgencyId() {
+        return agencyId;
+    }
+    public void setAgencyId(String agencyId) {
+        this.agencyId = agencyId;
     }
 
     public String getName() {
@@ -43,5 +47,12 @@ public class Feed {
     }
     public void setName(String name) {
         this.name = name;
+    }
+
+    public String getUrl() {
+        return url;
+    }
+    public void setUrl(String url) {
+        this.url = url;
     }
 }
