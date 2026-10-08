@@ -6,6 +6,7 @@ import com.example.RoTransit.repository.FeedRepository;
 import com.example.RoTransit.service.FeedService;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -30,7 +31,7 @@ public class FeedController {
 
     @GetMapping
     public List<FeedSummary> getPublicFeedList() {
-        return feeds.findAll().stream().map(FeedSummary::from).toList();
+        return feeds.findAll(Sort.by("id")).stream().map(FeedSummary::from).toList();
     }
 
     @GetMapping("/{id}/file")

@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
@@ -24,7 +26,10 @@ import java.util.UUID;
 
 import static org.hamcrest.Matchers.aMapWithSize;
 import static org.hamcrest.Matchers.hasSize;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -149,7 +154,7 @@ class FeedControllerTest {
 
     @Test
     void publicFeedListReturnsOnlySummaryFields() throws Exception {
-        when(repo.findAll()).thenReturn(List.of(feed(7L, "feeds/7.zip")));
+        when(repo.findAll(Sort.by("id"))).thenReturn(List.of(feed(7L, "feeds/7.zip")));
 
         mvc.perform(get("/api/feeds"))
                 .andExpect(status().isOk())
@@ -159,5 +164,21 @@ class FeedControllerTest {
                 .andExpect(jsonPath("$[0].cityName").value("Testville"))
                 .andExpect(jsonPath("$[0].companyName").value("TestCo"))
                 .andExpect(jsonPath("$[0].localPath").doesNotExist());
+    }
+
+    @Test
+    void publicFeedListAsksTheRepositoryForIdOrderAndKeepsIt() throws Exception {
+        // the repository is responsible for the order; the controller must ask for it and not re-sort or use findAll()
+        when(repo.findAll(Sort.by("id"))).thenReturn(List.of(feed(2L, "feeds/2.zip"), feed(5L, null), feed(9L, null)));
+
+        mvc.perform(get("/api/feeds"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].id", org.hamcrest.Matchers.contains(2, 5, 9)));
+
+        ArgumentCaptor<Sort> sort = ArgumentCaptor.forClass(Sort.class);
+        verify(repo).findAll(sort.capture());
+        assertThat(sort.getValue()).isEqualTo(Sort.by("id"));
+        assertThat(sort.getValue().getOrderFor("id").getDirection()).isEqualTo(Sort.Direction.ASC);
+        verify(repo, never()).findAll();
     }
 }

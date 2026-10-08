@@ -160,6 +160,39 @@ class AdminRoutesContextTest {
         verifyNoInteractions(feedService, feedUpdateJob);
     }
 
+    @Test
+    void statusListTieBreaksByIdEvenWhenTheDatabaseReturnsRowsOutOfIdOrder() throws Exception {
+        // explicit ids inserted in descending order, so a plain findAll() (heap order) returns them high-to-low
+        LocalDate same = LocalDate.now().plusDays(500);
+        insertWithId(9_000_003L, "CtxSameC", same);
+        insertWithId(9_000_002L, "CtxSameB", same);
+        insertWithId(9_000_001L, "CtxSameA", same);
+        insertWithId(9_000_012L, "CtxNullB", null);
+        insertWithId(9_000_011L, "CtxNullA", null);
+
+        String json = mvc.perform(get("/admin/feeds").header(HttpHeaders.AUTHORIZATION, basicAuth()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        List<Map<String, Object>> list = JsonPath.read(json, "$");
+
+        assertThat(list.indexOf(byCity(list, "CtxSameA"))).isLessThan(list.indexOf(byCity(list, "CtxSameB")));
+        assertThat(list.indexOf(byCity(list, "CtxSameB"))).isLessThan(list.indexOf(byCity(list, "CtxSameC")));
+        assertThat(list.indexOf(byCity(list, "CtxNullA"))).isLessThan(list.indexOf(byCity(list, "CtxNullB")));
+        // whole list: wherever two neighbours share expiresOn (null included), ids ascend
+        for (int i = 1; i < list.size(); i++) {
+            Map<String, Object> prev = list.get(i - 1), cur = list.get(i);
+            if (java.util.Objects.equals(prev.get("expiresOn"), cur.get("expiresOn"))) {
+                assertThat(((Number) prev.get("id")).longValue()).as("tie at %s", cur.get("expiresOn"))
+                        .isLessThan(((Number) cur.get("id")).longValue());
+            }
+        }
+    }
+
+    private void insertWithId(long id, String city, LocalDate expiresOn) {
+        jdbc.update("insert into feeds.feed (id, city_name, company_name, source_id, expires_on) values (?, ?, ?, ?, ?)",
+                id, city, city + "Co", "mdb-ctx-" + city, expiresOn == null ? null : Date.valueOf(expiresOn));
+    }
+
     private void insert(String city, LocalDate expiresOn) {
         jdbc.update("insert into feeds.feed (city_name, company_name, source_id, local_path, expires_on) values (?, ?, ?, ?, ?)",
                 city, city + "Co", "mdb-ctx-" + city, "feeds/should-not-leak.zip", expiresOn == null ? null : Date.valueOf(expiresOn));

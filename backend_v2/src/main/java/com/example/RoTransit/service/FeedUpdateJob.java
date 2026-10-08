@@ -46,6 +46,13 @@ public class FeedUpdateJob {
                     result = feed.getCityName() + " is up to date!";
                 }
             }
+            catch (InterruptedException e) {
+                // the app is shutting down or someone cancelled the job: stop instead of failing every remaining feed
+                Thread.currentThread().interrupt();
+                log.warn("Feed update interrupted at {}, stopping", feed.getCityName());
+                onResult.accept(feed.getCityName() + " interrupted, update stopped");
+                return;
+            }
             catch (Exception e) {
                 logFailedDownload(feed, e);
                 feeds.findById(feed.getId()).ifPresent(fresh -> {

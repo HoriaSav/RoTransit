@@ -41,7 +41,8 @@ public class AdminController {
     public List<FeedStatus> feeds(){
         return feeds.findAll().stream().map(FeedStatus::from)
                 .sorted(Comparator.comparing(FeedStatus::expiresOn,
-                        Comparator.nullsFirst(Comparator.naturalOrder())))
+                        Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparing(FeedStatus::id))
                 .toList();
     }
 

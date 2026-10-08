@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -25,6 +26,7 @@ import java.net.InetSocketAddress;
 import java.net.ProxySelector;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -37,9 +39,11 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -59,7 +63,7 @@ class FeedServiceDownloadTest {
     private static final String HOST = "files.mobilitydatabase.org";
     /** A small but real zip: download() now rejects bodies that are not a readable zip. */
     private static final byte[] ZIP_BYTES = zip("stops.txt", "stop_id,stop_name\n1,FeedServiceDownloadTest\n");
-    private static final List<Long> IDS = List.of(990001L, 990002L, 990003L, 990004L, 990005L, 990006L, 990007L, 990008L, 990009L);
+    private static final List<Long> IDS = List.of(990001L, 990002L, 990003L, 990004L, 990005L, 990006L, 990007L, 990008L, 990009L, 990010L, 990011L, 990012L, 990013L, 990014L);
     /** A real zip: feed_info.txt feed_end_date 2028-05-31 wins over calendar.txt end_date 2029-12-31. */
     private static final byte[] DATED_ZIP = zip(
             "feed_info.txt", "feed_publisher_name,feed_publisher_url,feed_lang,feed_end_date\nP,https://x,ro,20280531\n",
@@ -152,6 +156,14 @@ class FeedServiceDownloadTest {
                         out.write(TRUNCATED_ZIP);
                     }
                 }
+                case "/mdb-drop/latest.zip" -> {
+                    // promise 100000 bytes, send 1000, then fail the handler: the server closes the connection mid-body
+                    exchange.sendResponseHeaders(200, 100_000);
+                    OutputStream out = exchange.getResponseBody();
+                    out.write(java.util.Arrays.copyOf(DATED_ZIP, 1000));
+                    out.flush();
+                    throw new IOException("fake server drops the connection mid-body");
+                }
                 case "/mdb-redirect/latest.zip" -> {
                     exchange.getResponseHeaders().add("Location", "https://" + HOST + "/mdb-ok/latest.zip");
                     exchange.sendResponseHeaders(302, -1);
@@ -203,7 +215,20 @@ class FeedServiceDownloadTest {
 
     @AfterEach
     void tearDown() throws IOException {
+        Thread.interrupted(); // guard: never leak an interrupt flag into the next test
         cleanFeedsDir();
+    }
+
+    /** Runs download() and returns {thrown, interrupt flag right after the call}; the flag is always cleared. */
+    private Object[] downloadAndTakeInterruptFlag(long id) {
+        Throwable thrown;
+        boolean flag;
+        try {
+            thrown = catchThrowable(() -> service.download(id));
+        } finally {
+            flag = Thread.interrupted();
+        }
+        return new Object[] {thrown, flag};
     }
 
     private Feed feed(long id, String sourceId) {
@@ -236,7 +261,7 @@ class FeedServiceDownloadTest {
     }
 
     @Test
-    void non200SourceGives502AndLeavesNoTargetAndNoTempFile() throws Exception {
+    void non200SourceGives502MarksTheFeedFailedAndLeavesNoTargetAndNoTempFile() throws Exception {
         Feed feed = feed(990002L, "mdb-does-not-exist-xyz");
 
         assertThatThrownBy(() -> service.download(990002L))
@@ -245,9 +270,22 @@ class FeedServiceDownloadTest {
 
         assertThat(FeedService.FEEDS_ROOT.resolve("990002.zip")).doesNotExist();
         assertThat(partFiles(990002L)).isEmpty();
-        assertThat(feed.getStatus()).isEqualTo("new");
+        assertThat(feed.getStatus()).isEqualTo("failed");
         assertThat(feed.getLocalPath()).isNull();
-        verify(repo, never()).save(any());
+        Feed saved = savedOnce();
+        assertThat(saved).isSameAs(feed); // the instance loaded by download() itself, not a fresh copy
+        assertThat(saved.getStatus()).isEqualTo("failed");
+        assertThat(saved.getLocalPath()).isNull();
+        assertThat(saved.getSourceUrl()).isNull();
+        assertThat(saved.getDownloadedAt()).isNull();
+        assertThat(saved.getExpiresOn()).isNull();
+    }
+
+    /** Exactly one save, returning the entity that was passed to it. */
+    private Feed savedOnce() {
+        ArgumentCaptor<Feed> captor = ArgumentCaptor.forClass(Feed.class);
+        verify(repo, times(1)).save(captor.capture());
+        return captor.getValue();
     }
 
     @Test
@@ -318,12 +356,12 @@ class FeedServiceDownloadTest {
     }
 
     @Test
-    void nonZipBodyWith200Gives502AndTheExistingZipAndEntityStayUntouched() throws Exception {
+    void nonZipBodyWith200Gives502MarksFailedAndKeepsTheExistingZipAndOtherFields() throws Exception {
         assertCorruptBodyIsRejected(990008L, "mdb-html");
     }
 
     @Test
-    void truncatedZipWith200Gives502AndTheExistingZipAndEntityStayUntouched() throws Exception {
+    void truncatedZipWith200Gives502MarksFailedAndKeepsTheExistingZipAndOtherFields() throws Exception {
         assertThat(TRUNCATED_ZIP).startsWith((byte) 'P', (byte) 'K', (byte) 3, (byte) 4);
         assertCorruptBodyIsRejected(990009L, "mdb-truncated");
     }
@@ -352,14 +390,126 @@ class FeedServiceDownloadTest {
                 });
 
         assertThat(requestedPaths).containsExactly("/" + sourceId + "/latest.zip");
+        assertFailedButOtherwiseUntouched(feed, existing, downloadedAt);
+    }
+
+    /** status flips to failed and is saved once; the previous zip and every other field stay as they were. */
+    private void assertFailedButOtherwiseUntouched(Feed feed, Path existing, java.time.Instant downloadedAt) throws IOException {
         assertThat(Files.readAllBytes(existing)).isEqualTo(DATED_ZIP);
-        assertThat(partFiles(id)).isEmpty();
-        assertThat(feed.getStatus()).isEqualTo("downloaded");
+        assertThat(partFiles(feed.getId())).isEmpty();
+        assertThat(feed.getStatus()).isEqualTo("failed");
         assertThat(feed.getLocalPath()).isEqualTo(existing.toString());
         assertThat(feed.getSourceUrl()).isEqualTo("https://example.invalid/previous.zip");
         assertThat(feed.getDownloadedAt()).isEqualTo(downloadedAt);
         assertThat(feed.getExpiresOn()).isEqualTo(java.time.LocalDate.of(2028, 5, 31));
-        verify(repo, never()).save(any());
+        Feed saved = savedOnce();
+        assertThat(saved).isSameAs(feed);
+        assertThat(saved.getStatus()).isEqualTo("failed");
+        assertThat(saved.getLocalPath()).isEqualTo(existing.toString());
+        assertThat(saved.getSourceUrl()).isEqualTo("https://example.invalid/previous.zip");
+        assertThat(saved.getDownloadedAt()).isEqualTo(downloadedAt);
+        assertThat(saved.getExpiresOn()).isEqualTo(java.time.LocalDate.of(2028, 5, 31));
+    }
+
+    /** A previously good feed: existing zip on disk plus the fields a successful download leaves behind. */
+    private Feed previouslyDownloaded(long id, String sourceId, java.time.Instant downloadedAt) throws IOException {
+        Feed feed = feed(id, sourceId);
+        Files.createDirectories(FeedService.FEEDS_ROOT);
+        Path existing = FeedService.FEEDS_ROOT.resolve(id + ".zip");
+        Files.write(existing, DATED_ZIP);
+        feed.setStatus("downloaded");
+        feed.setLocalPath(existing.toString());
+        feed.setSourceUrl("https://example.invalid/previous.zip");
+        feed.setDownloadedAt(downloadedAt);
+        feed.setExpiresOn(java.time.LocalDate.of(2028, 5, 31));
+        return feed;
+    }
+
+    @Test
+    void connectionDroppedMidBodyMarksFailedSavesOnceAndRethrowsTheIOExceptionUnwrapped() throws Exception {
+        java.time.Instant downloadedAt = java.time.Instant.parse("2026-01-02T03:04:05Z");
+        Feed feed = previouslyDownloaded(990010L, "mdb-drop", downloadedAt);
+
+        Object[] r = downloadAndTakeInterruptFlag(990010L);
+        Throwable thrown = (Throwable) r[0];
+
+        assertThat((boolean) r[1]).as("an IOException must not set the interrupt flag").isFalse();
+        assertThat(thrown).isInstanceOf(IOException.class).isNotInstanceOf(ResponseStatusException.class);
+        assertThat(requestedPaths).containsExactly("/mdb-drop/latest.zip");
+        assertFailedButOtherwiseUntouched(feed, Path.of(feed.getLocalPath()), downloadedAt);
+    }
+
+    @Test
+    void ioExceptionFromTheHttpClientIsRethrownAsTheSameInstanceAndLeavesNoInterruptFlag() throws Exception {
+        java.time.Instant downloadedAt = java.time.Instant.parse("2026-01-02T03:04:05Z");
+        Feed feed = previouslyDownloaded(990011L, "mdb-ok", downloadedAt);
+        HttpClient client = mock(HttpClient.class);
+        IOException boom = new IOException("connection reset");
+        when(client.send(any(), any())).thenThrow(boom);
+        ReflectionTestUtils.setField(service, "client", client);
+
+        Object[] r = downloadAndTakeInterruptFlag(990011L);
+        Throwable thrown = (Throwable) r[0];
+
+        assertThat((boolean) r[1]).as("an IOException must not set the interrupt flag").isFalse();
+        assertThat(thrown).isSameAs(boom);
+        assertThat(requestedPaths).isEmpty();
+        assertFailedButOtherwiseUntouched(feed, Path.of(feed.getLocalPath()), downloadedAt);
+    }
+
+    @Test
+    void interruptedExceptionFromTheHttpClientMarksFailedRethrowsTheSameInstanceAndRestoresTheFlag() throws Exception {
+        java.time.Instant downloadedAt = java.time.Instant.parse("2026-01-02T03:04:05Z");
+        Feed feed = previouslyDownloaded(990012L, "mdb-ok", downloadedAt);
+        HttpClient client = mock(HttpClient.class);
+        InterruptedException interrupted = new InterruptedException("stop");
+        when(client.send(any(), any())).thenThrow(interrupted);
+        ReflectionTestUtils.setField(service, "client", client);
+
+        Object[] r = downloadAndTakeInterruptFlag(990012L);
+        Throwable thrown = (Throwable) r[0];
+
+        assertThat((boolean) r[1]).as("interrupt flag restored after the throw").isTrue();
+        assertThat(thrown).isSameAs(interrupted);
+        assertFailedButOtherwiseUntouched(feed, Path.of(feed.getLocalPath()), downloadedAt);
+    }
+
+    @Test
+    void realInterruptDuringSendMarksFailedRethrowsAndRestoresTheFlag() throws Exception {
+        java.time.Instant downloadedAt = java.time.Instant.parse("2026-01-02T03:04:05Z");
+        Feed feed = previouslyDownloaded(990013L, "mdb-ok", downloadedAt);
+
+        Thread.currentThread().interrupt();
+        Object[] r = downloadAndTakeInterruptFlag(990013L);
+        Throwable thrown = (Throwable) r[0];
+
+        System.out.println("[r19] interrupt flag after download(): " + r[1] + ", thrown: " + thrown);
+        assertThat((boolean) r[1]).as("interrupt flag restored after the throw").isTrue();
+        assertThat(thrown).isInstanceOf(InterruptedException.class);
+        assertFailedButOtherwiseUntouched(feed, Path.of(feed.getLocalPath()), downloadedAt);
+    }
+
+    @Test
+    void failedSaveRunsWithTheFlagClearAndTheFlagIsRestoredOnlyAfterIt() throws Exception {
+        java.time.Instant downloadedAt = java.time.Instant.parse("2026-01-02T03:04:05Z");
+        Feed feed = previouslyDownloaded(990014L, "mdb-ok", downloadedAt);
+        HttpClient client = mock(HttpClient.class);
+        InterruptedException interrupted = new InterruptedException("stop");
+        when(client.send(any(), any())).thenThrow(interrupted);
+        ReflectionTestUtils.setField(service, "client", client);
+        List<Boolean> flagDuringSave = new CopyOnWriteArrayList<>();
+        when(repo.save(any(Feed.class))).thenAnswer(inv -> {
+            flagDuringSave.add(Thread.currentThread().isInterrupted());
+            return inv.getArgument(0);
+        });
+
+        Object[] r = downloadAndTakeInterruptFlag(990014L);
+
+        // the save talks to the database, so it must not run with the flag set (a set flag can abort a blocking pool wait)
+        assertThat(flagDuringSave).containsExactly(false);
+        assertThat((boolean) r[1]).isTrue();
+        assertThat(r[0]).isSameAs(interrupted);
+        assertFailedButOtherwiseUntouched(feed, Path.of(feed.getLocalPath()), downloadedAt);
     }
 
     private static byte[] zip(String... nameContentPairs) {

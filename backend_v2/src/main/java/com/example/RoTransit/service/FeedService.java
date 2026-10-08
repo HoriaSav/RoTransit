@@ -73,6 +73,14 @@ public class FeedService {
                         "source sent an invalid zip for " + sourceUrl, e);
             }
             Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException | InterruptedException | RuntimeException e) {
+            feed.setStatus("failed");
+            feeds.save(feed);
+            if (e instanceof InterruptedException) {
+                // catching InterruptedException clears the thread's interrupt flag, so set it again for the caller
+                Thread.currentThread().interrupt();
+            }
+            throw e;
         } finally {
             // after a successful move the temp file is gone, so this only cleans up failures
             Files.deleteIfExists(temp);

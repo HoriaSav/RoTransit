@@ -7,10 +7,12 @@ import com.example.RoTransit.service.FeedUpdateJob;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -26,11 +28,13 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
@@ -72,7 +76,8 @@ class SecurityConfigTest {
     @BeforeEach
     void stubs() throws Exception {
         when(repo.findById(1L)).thenReturn(Optional.of(feed(1L, null)));
-        when(repo.findAll()).thenReturn(List.of(feed(1L, null)));
+        when(repo.findAll()).thenReturn(List.of(feed(1L, null)));               // AdminController sorts in memory
+        when(repo.findAll(Sort.by("id"))).thenReturn(List.of(feed(1L, null)));  // FeedController asks the DB for id order
         when(repo.save(any(Feed.class))).thenAnswer(inv -> inv.getArgument(0));
         when(feedService.getExpireDate(1L)).thenReturn(LocalDate.of(2027, 12, 9));
         when(feedService.download(1L)).thenReturn(feed(1L, null));
@@ -103,13 +108,15 @@ class SecurityConfigTest {
     }
 
     private HttpResponse<byte[]> call(String method, String path, String authorization) throws Exception {
+        return method.equals("POST")
+                ? send(method, path, authorization, "application/json", "{\"cityName\":\"SecProbe\",\"companyName\":\"SecCo\",\"sourceId\":\"mdb-sec\"}")
+                : send(method, path, authorization, null, null);
+    }
+
+    private HttpResponse<byte[]> send(String method, String path, String authorization, String contentType, String requestBody) throws Exception {
         HttpRequest.Builder b = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path));
-        if (method.equals("POST")) {
-            b.header("Content-Type", "application/json")
-             .POST(HttpRequest.BodyPublishers.ofString("{\"cityName\":\"SecProbe\",\"companyName\":\"SecCo\",\"sourceId\":\"mdb-sec\"}"));
-        } else {
-            b.method(method, HttpRequest.BodyPublishers.noBody());
-        }
+        b.method(method, requestBody == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(requestBody));
+        if (contentType != null) b.header("Content-Type", contentType);
         if (authorization != null) b.header("Authorization", authorization);
         HttpResponse<byte[]> response = http.send(b.build(), HttpResponse.BodyHandlers.ofByteArray());
         // stateless: no response may ever try to start a session
@@ -136,6 +143,7 @@ class SecurityConfigTest {
         verify(repo, never()).save(any());
         verify(repo, never()).findById(any());
         verify(repo, never()).findAll();
+        verify(repo, never()).findAll(any(Sort.class));
     }
 
     @Test
@@ -179,13 +187,60 @@ class SecurityConfigTest {
     }
 
     @Test
-    void badGatewayFromDownloadStays502ForTheAdminThroughTheErrorDispatch() throws Exception {
+    void badGatewayFromDownloadStays502AsProblemJsonForTheAdmin() throws Exception {
         when(feedService.download(2L)).thenThrow(new ResponseStatusException(HttpStatus.BAD_GATEWAY, "source returned 403"));
 
         HttpResponse<byte[]> r = call("POST", "/admin/feeds/2/download", admin());
 
         assertThat(r.statusCode()).isEqualTo(502);
-        assertThat(body(r)).contains("\"status\":502");
+        assertProblem(r, 502, "Bad Gateway", "/admin/feeds/2/download");
+        assertThat(body(r)).contains("\"detail\":\"source returned 403\"");
+    }
+
+    /** application/problem+json with the RFC 9457 fields; Boot's error-JSON "path"/"timestamp" must not appear. */
+    private static void assertProblem(HttpResponse<byte[]> r, int status, String title, String instance) {
+        assertThat(r.statusCode()).isEqualTo(status);
+        assertThat(r.headers().firstValue("Content-Type")).hasValue("application/problem+json");
+        Map<String, Object> json = com.jayway.jsonpath.JsonPath.read(body(r), "$");
+        assertThat(json).containsEntry("status", status).containsEntry("title", title).containsEntry("instance", instance)
+                .doesNotContainKeys("path", "timestamp", "error");
+    }
+
+    // ---- problem+json through the real filter chain (authenticated) ----
+
+    @Test
+    void malformedJsonIs400ProblemJson() throws Exception {
+        HttpResponse<byte[]> r = send("POST", "/admin/feeds", admin(), "application/json", "{\"cityName\": ");
+        assertProblem(r, 400, "Bad Request", "/admin/feeds");
+        assertThat(body(r)).contains("\"detail\":\"Failed to read request\"");
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void wrongMethodIs405ProblemJsonWithAllowHeader() throws Exception {
+        HttpResponse<byte[]> r = send("DELETE", "/admin/feeds", admin(), null, null);
+        assertProblem(r, 405, "Method Not Allowed", "/admin/feeds");
+        assertThat(r.headers().firstValue("Allow")).hasValueSatisfying(v -> assertThat(v.split(",\\s*")).containsExactlyInAnyOrder("GET", "POST"));
+        assertThat(body(r)).contains("\"detail\":\"Method 'DELETE' is not supported.\"");
+    }
+
+    @Test
+    void wrongContentTypeIs415ProblemJson() throws Exception {
+        HttpResponse<byte[]> r = send("POST", "/admin/feeds", admin(), "text/plain", "cityName=x");
+        assertProblem(r, 415, "Unsupported Media Type", "/admin/feeds");
+        assertThat(body(r)).contains("\"detail\":\"Content-Type 'text/plain").contains("is not supported.\"");
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void nonNumericIdIs400ProblemJson() throws Exception {
+        HttpResponse<byte[]> r = send("GET", "/admin/feeds/abc", admin(), null, null);
+        assertProblem(r, 400, "Bad Request", "/admin/feeds/abc");
+        assertThat(body(r)).contains("\"detail\":\"Failed to convert 'id' with value: 'abc'\"");
+        verify(repo, never()).findById(anyLong());
+
+        // same on the public side, anonymously
+        assertProblem(send("GET", "/api/feeds/abc/file", null, null, null), 400, "Bad Request", "/api/feeds/abc/file");
     }
 
     @Test
@@ -194,6 +249,10 @@ class SecurityConfigTest {
         assertThat(admin404.statusCode()).isEqualTo(404);
         assertThat(admin404.headers().firstValue("Content-Type")).hasValue("application/problem+json");
         assertThat(body(admin404)).contains("\"detail\":\"Feed not found\"");
+        // the NoSuchElementException handler is unchanged: exactly detail/instance/status/title
+        assertProblem(admin404, 404, "Not Found", "/admin/feeds/999999");
+        Map<String, Object> json = com.jayway.jsonpath.JsonPath.read(body(admin404), "$");
+        assertThat(json).containsOnlyKeys("title", "status", "detail", "instance"); // type=about:blank is omitted
 
         HttpResponse<byte[]> public404 = call("GET", "/api/feeds/999999/file", null);
         assertThat(public404.statusCode()).isEqualTo(404);
@@ -214,6 +273,10 @@ class SecurityConfigTest {
         HttpResponse<byte[]> list = call("GET", "/api/feeds", null);
         assertThat(list.statusCode()).isEqualTo(200);
         assertThat(body(list)).isEqualTo("[{\"id\":1,\"cityName\":\"Testville\",\"companyName\":\"TestCo\"}]");
+        ArgumentCaptor<Sort> sort = ArgumentCaptor.forClass(Sort.class);
+        verify(repo).findAll(sort.capture());
+        assertThat(sort.getValue()).isEqualTo(Sort.by("id"));
+        verify(repo, never()).findAll();
 
         HttpResponse<byte[]> file = call("GET", "/api/feeds/3/file", null);
         assertThat(file.statusCode()).isEqualTo(200);
@@ -231,19 +294,30 @@ class SecurityConfigTest {
         assertThat(r.statusCode()).isEqualTo(401);
         assertThat(r.headers().firstValue("WWW-Authenticate")).hasValueSatisfying(v -> assertThat(v).startsWith("Basic realm="));
         verify(repo, never()).findAll();
+        verify(repo, never()).findAll(any(Sort.class));
     }
 
     @Test
     void errorDispatchFromAPublicRouteIsPermittedSoTheRealStatusComesThrough() throws Exception {
-        // localPath null -> ResponseStatusException(404) -> sendError -> ERROR dispatch to /error, which must be permitted
+        // localPath null -> ResponseStatusException(404): since GlobalExceptionHandler extends ResponseEntityExceptionHandler
+        // the advice renders it as problem+json directly (no ERROR dispatch any more)
         when(repo.findById(4L)).thenReturn(Optional.of(feed(4L, null)));
 
         HttpResponse<byte[]> missingFile = call("GET", "/api/feeds/4/file", null);
-        assertThat(missingFile.statusCode()).isEqualTo(404);
-        assertThat(body(missingFile)).contains("\"status\":404").contains("\"path\":\"/api/feeds/4/file\"");
+        assertProblem(missingFile, 404, "Not Found", "/api/feeds/4/file");
 
+        // no handler: NoResourceFoundException, also handled by the advice
         HttpResponse<byte[]> noRoute = call("GET", "/api/does-not-exist", null);
-        assertThat(noRoute.statusCode()).isEqualTo(404);
+        assertProblem(noRoute, 404, "Not Found", "/api/does-not-exist");
+
+        // an exception no handler knows still goes through Boot's ERROR dispatch to /error, which must be permitted
+        // (otherwise the anonymous caller would see 401 instead of the real 500)
+        when(repo.findById(5L)).thenThrow(new IllegalStateException("database down"));
+        HttpResponse<byte[]> unhandled = call("GET", "/api/feeds/5/file", null);
+        assertThat(unhandled.statusCode()).isEqualTo(500);
+        assertThat(unhandled.headers().firstValue("WWW-Authenticate")).isEmpty();
+        assertThat(body(unhandled)).contains("\"status\":500").contains("\"path\":\"/api/feeds/5/file\"")
+                .doesNotContain("database down");
     }
 
     // ---- everything else ----

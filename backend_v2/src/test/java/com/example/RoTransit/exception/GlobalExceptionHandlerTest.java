@@ -19,12 +19,19 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.aMapWithSize;
+import static org.hamcrest.Matchers.containsString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -124,5 +131,92 @@ class GlobalExceptionHandlerTest {
         // not handled by the advice: propagates (500 in the real app), it is not swallowed into a 404
         assertThatThrownBy(() -> mvcIse.perform(get("/admin/feeds/5/expires")))
                 .hasRootCauseInstanceOf(IllegalStateException.class);
+    }
+
+    // ---- ResponseEntityExceptionHandler: framework errors are problem+json too (standalone, no Boot error page) ----
+
+    private static org.springframework.test.web.servlet.ResultMatcher[] problem(int status, String title, String instance) {
+        return new org.springframework.test.web.servlet.ResultMatcher[]{
+                status().is(status),
+                content().contentType(MediaType.APPLICATION_PROBLEM_JSON),
+                jsonPath("$.status").value(status),
+                jsonPath("$.title").value(title),
+                jsonPath("$.instance").value(instance),
+                jsonPath("$.detail").isNotEmpty(),
+                jsonPath("$.path").doesNotExist(),
+                jsonPath("$.timestamp").doesNotExist()};
+    }
+
+    @Test
+    void malformedJsonIs400ProblemJson() throws Exception {
+        mvc.perform(post("/admin/feeds").contentType(MediaType.APPLICATION_JSON).content("{\"cityName\": "))
+                .andExpectAll(problem(400, "Bad Request", "/admin/feeds"))
+                .andExpect(jsonPath("$.detail").value("Failed to read request"));
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void wrongMethodIs405ProblemJsonWithAllowHeader() throws Exception {
+        mvc.perform(request(org.springframework.http.HttpMethod.DELETE, "/admin/feeds"))
+                .andExpectAll(problem(405, "Method Not Allowed", "/admin/feeds"))
+                .andExpect(header().string("Allow", containsString("GET")))
+                .andExpect(header().string("Allow", containsString("POST")))
+                .andExpect(jsonPath("$.detail").value("Method 'DELETE' is not supported."));
+    }
+
+    @Test
+    void wrongContentTypeIs415ProblemJson() throws Exception {
+        mvc.perform(post("/admin/feeds").contentType(MediaType.TEXT_PLAIN).content("cityName=x"))
+                .andExpectAll(problem(415, "Unsupported Media Type", "/admin/feeds"))
+                .andExpect(jsonPath("$.detail").value(containsString("Content-Type 'text/plain")));
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void nonNumericIdIs400ProblemJson() throws Exception {
+        mvc.perform(get("/admin/feeds/abc"))
+                .andExpectAll(problem(400, "Bad Request", "/admin/feeds/abc"))
+                .andExpect(jsonPath("$.detail").value("Failed to convert 'id' with value: 'abc'"));
+        mvc.perform(get("/api/feeds/abc/file"))
+                .andExpectAll(problem(400, "Bad Request", "/api/feeds/abc/file"));
+        verify(repo, never()).findById(anyLong());
+    }
+
+    @Test
+    void responseStatusException502IsProblemJsonWithTheReasonAsDetail() throws Exception {
+        FeedService service = mock(FeedService.class);
+        when(service.download(5L)).thenThrow(new ResponseStatusException(HttpStatus.BAD_GATEWAY, "source returned 403 for https://files.mobilitydatabase.org/mdb-x/latest.zip"));
+        MockMvc mvc502 = MockMvcBuilders
+                .standaloneSetup(new AdminController(repo, service, mock(FeedUpdateJob.class)))
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .build();
+
+        mvc502.perform(request(org.springframework.http.HttpMethod.POST, "/admin/feeds/5/download"))
+                .andExpectAll(problem(502, "Bad Gateway", "/admin/feeds/5/download"))
+                // note: the reason, including the upstream URL, is exposed as detail
+                .andExpect(jsonPath("$.detail").value("source returned 403 for https://files.mobilitydatabase.org/mdb-x/latest.zip"));
+    }
+
+    @Test
+    void responseStatusException404WithoutReasonIsProblemJson() throws Exception {
+        com.example.RoTransit.entity.Feed noFile = new com.example.RoTransit.entity.Feed();
+        org.springframework.test.util.ReflectionTestUtils.setField(noFile, "id", 7L);
+        when(repo.findById(7L)).thenReturn(Optional.of(noFile)); // localPath null -> ResponseStatusException(NOT_FOUND)
+
+        mvc.perform(get("/api/feeds/7/file"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.title").value("Not Found"))
+                .andExpect(jsonPath("$.instance").value("/api/feeds/7/file"))
+                .andExpect(jsonPath("$.path").doesNotExist());
+    }
+
+    @Test
+    void noSuchElement404IsUnchanged() throws Exception {
+        mvc.perform(get("/admin/feeds/999999"))
+                .andExpectAll(problem(404, "Not Found", "/admin/feeds/999999"))
+                .andExpect(jsonPath("$.detail").value("Feed not found"))
+                .andExpect(jsonPath("$", aMapWithSize(4))); // title, status, detail, instance (type=about:blank omitted)
     }
 }

@@ -2,11 +2,14 @@ package com.example.RoTransit.service;
 
 import com.example.RoTransit.entity.Feed;
 import com.example.RoTransit.repository.FeedRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.io.IOException;
@@ -16,17 +19,20 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.same;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -42,6 +48,12 @@ class FeedUpdateJobTest {
 
     @TempDir
     Path tmp;
+
+    /** Guard: an interrupt test must never leak the flag into the next test, even when it fails half-way. */
+    @AfterEach
+    void clearInterruptFlag() {
+        Thread.interrupted();
+    }
 
     private Path existingZip() throws IOException {
         return Files.createFile(tmp.resolve("present-" + System.nanoTime() + ".zip"));
@@ -235,5 +247,126 @@ class FeedUpdateJobTest {
     void noFeedsMeansNoLines() {
         assertThat(run()).isEmpty();
         verifyNoInteractions(service);
+    }
+
+    // ---- interruption (r19) ----
+
+    /** Three feeds that all need a download: missing file, expiring in 2 days, null expiresOn. */
+    private Feed[] threeFeedsThatAllNeedADownload() throws IOException {
+        return new Feed[] {
+                feed(1, "Cluj", null, LocalDate.now().plusYears(1)),
+                feed(2, "Iasi", existingZip().toString(), LocalDate.now().plusDays(2)),
+                feed(3, "Brasov", existingZip().toString(), null)
+        };
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Consumer<String> consumer() {
+        return mock(Consumer.class);
+    }
+
+    /** Runs updateFeeds and returns the interrupt flag as it was right after the call, clearing it immediately. */
+    private boolean runAndTakeInterruptFlag(Consumer<String> onResult) {
+        boolean flag;
+        try {
+            job.updateFeeds(onResult);
+        } finally {
+            flag = Thread.interrupted(); // cleared even if updateFeeds throws; the exception still propagates
+        }
+        return flag;
+    }
+
+    @Test
+    void interruptOnTheSecondFeedStopsTheRunReportsItOnceAndRestoresTheFlag() throws Exception {
+        Feed[] f = threeFeedsThatAllNeedADownload();
+        when(repo.findAll()).thenReturn(List.of(f));
+        when(service.download(1L)).thenReturn(f[0]);
+        when(service.download(2L)).thenThrow(new InterruptedException("shutdown"));
+        Consumer<String> onResult = consumer();
+        assertThat(Thread.currentThread().isInterrupted()).isFalse();
+
+        boolean flagAfter = runAndTakeInterruptFlag(onResult);
+
+        assertThat(flagAfter).as("interrupt flag restored for the caller").isTrue();
+        ArgumentCaptor<String> lines = ArgumentCaptor.forClass(String.class);
+        verify(onResult, times(2)).accept(lines.capture());
+        assertThat(lines.getAllValues()).containsExactly("Cluj has been updated!", "Iasi interrupted, update stopped");
+        InOrder order = inOrder(repo, service, onResult);
+        order.verify(repo).findAll();
+        order.verify(service).download(1L);
+        order.verify(onResult).accept("Cluj has been updated!");
+        order.verify(service).download(2L);
+        order.verify(onResult).accept("Iasi interrupted, update stopped");
+        verify(service, never()).download(3L);
+        // the job itself marks nothing failed: FeedService.download already saved #2 as failed before rethrowing
+        verify(repo, never()).findById(anyLong());
+        verify(repo, never()).save(any());
+        verifyNoMoreInteractions(repo, service, onResult);
+        assertThat(f[1].getStatus()).isEqualTo("downloaded");
+        assertThat(f[2].getStatus()).isEqualTo("downloaded");
+    }
+
+    @Test
+    void interruptOnTheFirstFeedEmitsOneLineAndDownloadsNothingAfterIt() throws Exception {
+        Feed[] f = threeFeedsThatAllNeedADownload();
+        when(repo.findAll()).thenReturn(List.of(f));
+        when(service.download(1L)).thenThrow(new InterruptedException("shutdown"));
+        Consumer<String> onResult = consumer();
+
+        boolean flagAfter = runAndTakeInterruptFlag(onResult);
+
+        assertThat(flagAfter).isTrue();
+        verify(onResult).accept("Cluj interrupted, update stopped");
+        verify(service).download(1L);
+        verify(service, never()).download(2L);
+        verify(service, never()).download(3L);
+        verify(repo).findAll();
+        verifyNoMoreInteractions(repo, service, onResult);
+    }
+
+    @Test
+    void plainExceptionOnTheSecondFeedStillContinuesToTheThirdAndLeavesNoInterruptFlag() throws Exception {
+        Feed[] f = threeFeedsThatAllNeedADownload();
+        Feed iasiFromDb = feed(2, "Iasi", f[1].getLocalPath(), f[1].getExpiresOn());
+        when(repo.findAll()).thenReturn(List.of(f));
+        when(service.download(2L)).thenThrow(new IOException("connection reset"));
+        when(repo.findById(2L)).thenReturn(Optional.of(iasiFromDb));
+        Consumer<String> onResult = consumer();
+
+        boolean flagAfter = runAndTakeInterruptFlag(onResult);
+
+        assertThat(flagAfter).as("a plain failure must not set the interrupt flag").isFalse();
+        ArgumentCaptor<String> lines = ArgumentCaptor.forClass(String.class);
+        verify(onResult, times(3)).accept(lines.capture());
+        assertThat(lines.getAllValues()).containsExactly(
+                "Cluj has been updated!", "Iasi failed, connection reset", "Brasov has been updated!");
+        InOrder order = inOrder(service, repo);
+        order.verify(service).download(1L);
+        order.verify(service).download(2L);
+        order.verify(repo).findById(2L);
+        order.verify(repo).save(same(iasiFromDb));
+        order.verify(service).download(3L);
+        assertThat(iasiFromDb.getStatus()).isEqualTo("failed");
+        assertThat(f[1].getStatus()).isEqualTo("downloaded");
+    }
+
+    @Test
+    void scheduledRunStopsOnInterruptReturnsNormallyAndLeavesTheFlagSet() throws Exception {
+        Feed[] f = threeFeedsThatAllNeedADownload();
+        when(repo.findAll()).thenReturn(List.of(f));
+        when(service.download(2L)).thenThrow(new InterruptedException("shutdown"));
+
+        boolean flagAfter;
+        try {
+            job.updateFeedsScheduled(); // must not throw: the scheduler would only log it
+        } finally {
+            flagAfter = Thread.interrupted();
+        }
+
+        assertThat(flagAfter).isTrue();
+        verify(service).download(1L);
+        verify(service).download(2L);
+        verify(service, never()).download(3L);
+        verify(repo, never()).save(any());
     }
 }

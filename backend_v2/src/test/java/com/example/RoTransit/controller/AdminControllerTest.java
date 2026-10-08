@@ -234,7 +234,7 @@ class AdminControllerTest {
     }
 
     @Test
-    void statusListIsNullsFirstThenExpiresOnAscendingWithTiesKeptInRepositoryOrder() throws Exception {
+    void statusListIsNullsFirstThenExpiresOnAscendingWithTiesById() throws Exception {
         LocalDate today = LocalDate.now();
         when(repo.findAll()).thenReturn(List.of(
                 feed(1L, "A", today.plusDays(10)),
@@ -251,6 +251,26 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$[*].id", contains(2, 5, 3, 6, 7, 1, 4)))
                 .andExpect(jsonPath("$[*].daysLeft", contains(null, null, -3, 0, 2, 10, 10)));
         verifyNoInteractions(feedService, feedUpdateJob);
+    }
+
+    @Test
+    void tiesAreBrokenByIdWhateverOrderTheRepositoryReturns() throws Exception {
+        LocalDate today = LocalDate.now();
+        LocalDate same = today.plusDays(20);
+        // reverse / shuffled id order on purpose: two nulls, three on the same date, one earlier, one later
+        when(repo.findAll()).thenReturn(List.of(
+                feed(9L, "I", same),
+                feed(8L, "H", null),
+                feed(7L, "G", today.plusDays(40)),
+                feed(3L, "C", same),
+                feed(6L, "F", null),
+                feed(5L, "E", same),
+                feed(1L, "A", today.plusDays(1))));
+
+        mvc.perform(get("/admin/feeds"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].id", contains(6, 8, 1, 3, 5, 9, 7)))
+                .andExpect(jsonPath("$[*].daysLeft", contains(null, null, 1, 20, 20, 20, 40)));
     }
 
     @Test
