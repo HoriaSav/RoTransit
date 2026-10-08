@@ -16,11 +16,14 @@ import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
+import java.util.zip.ZipFile;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -40,6 +43,10 @@ class FeedServiceExpireDateTest {
     Path tmp;
 
     private LocalDate expiry(Map<String, String> files) throws IOException {
+        return expiryOf(zipOf(files).toString());
+    }
+
+    private Path zipOf(Map<String, String> files) throws IOException {
         Path zip = tmp.resolve("feed.zip");
         try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(zip))) {
             for (Map.Entry<String, String> e : files.entrySet()) {
@@ -48,7 +55,7 @@ class FeedServiceExpireDateTest {
                 out.closeEntry();
             }
         }
-        return expiryOf(zip.toString());
+        return zip;
     }
 
     private LocalDate expiryOf(String localPath) throws IOException {
@@ -251,5 +258,219 @@ class FeedServiceExpireDateTest {
                 "calendar_dates.txt", CAL_DATES + "wk,abc,1\nwk,2027-12-09,1\n")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("no expiry date found");
+    }
+
+    // ---- real CSV quoting (r20, Commons CSV) ----
+    // Each feed_info case ships a calendar.txt with a LATER date (2029-12-31): if feed_info is misparsed and
+    // falls through, the result is 2029-12-31 instead of the feed_end_date, so a wrong split cannot pass by accident.
+
+    private static final String FI = "feed_publisher_name,feed_publisher_url,feed_lang,feed_end_date\n";
+    private static final String LATER_CAL = CAL + "wk,1,1,1,1,1,0,0,20260101,20291231\n";
+
+    @Test
+    void feedInfoQuotedPublisherNameWithACommaBeforeTheEndDate() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", FI + "\"Foo, Inc\",https://x,ro,20271209\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2027, 12, 9));
+    }
+
+    @Test
+    void calendarQuotedCommaBeforeEndDateStillPicksTheLatestRow() throws Exception {
+        // a naive split shifts the quoted rows by one column and reads start_date (2026-01-01) as end_date
+        assertThat(expiry(files("calendar.txt", CAL
+                + "\"wk, weekdays\",1,1,1,1,1,0,0,20260101,20271231\n"
+                + "plain,1,1,1,1,1,0,0,20260101,20280115\n"
+                + "\"we, weekend\",0,0,0,0,0,1,1,20260101,20290320\n"
+                + "\"x, y\",0,0,0,0,0,1,1,20260101,20270101\n")))
+                .isEqualTo(LocalDate.of(2029, 3, 20));
+    }
+
+    @Test
+    void calendarDatesQuotedCommaBeforeDateStillPicksTheLatestRow() throws Exception {
+        assertThat(expiry(files("calendar_dates.txt", "service_id,service_name,date,exception_type\n"
+                + "wk,\"Weekdays, winter\",20270315,1\n"
+                + "wk,\"Weekdays, summer\",20290101,2\n"
+                + "we,Weekend,20280101,1\n"
+                + "\"we, b\",\"Weekend, b\",20261111,1\n")))
+                .isEqualTo(LocalDate.of(2029, 1, 1));
+    }
+
+    @Test
+    void quotedHeaderNamesAfterABomAreMatched() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", "\uFEFF\"feed_publisher_name\",\"feed_end_date\"\n\"Foo, Inc\",\"20280531\"\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2028, 5, 31));
+        // the looked-up column first, so the BOM sits directly in front of its opening quote
+        assertThat(expiry(files(
+                "feed_info.txt", "\uFEFF\"feed_end_date\",\"feed_publisher_name\"\n20280531,\"Foo, Inc\"\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2028, 5, 31));
+    }
+
+    @Test
+    void quotedDateValueIsParsed() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", FI + "P,https://x,ro,\"20271209\"\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2027, 12, 9));
+    }
+
+    @Test
+    void escapedDoubleQuotesInsideAFieldBeforeTheEndDate() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", FI + "\"Foo \"\"Bar\"\", Inc\",https://x,ro,20271209\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2027, 12, 9));
+    }
+
+    /**
+     * An unclosed quote makes feed_info.txt a broken CSV file. latestDate logs a warning and skips that file,
+     * so readExpireDate falls back to calendar.txt, which has a valid date here.
+     */
+    @Test
+    void unclosedQuoteInFeedInfoFallsBackToTheCalendarDateAndLeavesTheZipIntact() throws Exception {
+        Path zip = zipOf(files(
+                "feed_info.txt", FI + "\"Foo, Inc,https://x,ro,20271209\n",
+                "calendar.txt", LATER_CAL));
+        byte[] before = Files.readAllBytes(zip);
+
+        assertThat(expiryOf(zip.toString())).isEqualTo(LocalDate.of(2029, 12, 31));
+
+        assertThat(Files.readAllBytes(zip)).isEqualTo(before);
+        try (ZipFile z = new ZipFile(zip.toFile())) {
+            assertThat(z.getEntry("feed_info.txt")).isNotNull();
+            assertThat(z.getEntry("calendar.txt")).isNotNull();
+        }
+        try (Stream<Path> left = Files.list(tmp)) {
+            assertThat(left).containsExactly(zip); // no temp or extracted files next to it
+        }
+    }
+
+    @Test
+    void unclosedQuoteInTheHeaderFallsBackAndWhenEveryFileIsBrokenItThrowsIllegalStateException() throws Exception {
+        // broken header in feed_info.txt -> skipped, calendar.txt is used
+        assertThat(expiry(files(
+                "feed_info.txt", "feed_publisher_name,\"feed_end_date\nP,20271209\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2029, 12, 31));
+        // the only file (the last fallback) is broken -> nothing left to try
+        assertThat(catchThrowable(() -> expiry(files("calendar_dates.txt", CAL_DATES + "wk,20270101,1\n\"wk,20280101,1\n"))))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("no expiry date found");
+        // all three files broken
+        assertThat(catchThrowable(() -> expiry(files(
+                "feed_info.txt", FI + "\"Foo, Inc,https://x,ro,20271209\n",
+                "calendar.txt", CAL + "\"wk,1,1,1,1,1,0,0,20260101,20291231\n",
+                "calendar_dates.txt", CAL_DATES + "\"wk,20280101,1\n"))))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("no expiry date found");
+    }
+
+    @Test
+    void crlfLineEndingsWithQuotedCommaFields() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", FI.replace("\n", "\r\n") + "\"Foo, Inc\",https://x,ro,\"20271209\"\r\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2027, 12, 9));
+    }
+
+    @Test
+    void quotedFieldWithAnEmbeddedNewlineBeforeTheEndDate() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", FI + "\"Foo\nInc\",https://x,ro,20271209\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2027, 12, 9));
+        // the multi-line field in the middle of the row, so the continuation line has fewer columns than the header
+        assertThat(expiry(files(
+                "feed_info.txt", FI + "P,\"https://x,\r\nsecond line\",ro,20271209\r\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2027, 12, 9));
+    }
+
+    @Test
+    void headerOnlyFeedInfoWithoutTrailingNewlineFallsThroughToCalendar() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", FI.trim(),
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2029, 12, 31));
+    }
+
+    @Test
+    void bomOnlyFeedInfoFallsThroughToCalendar() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", "\uFEFF",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2029, 12, 31));
+    }
+
+    @Test
+    void duplicateHeaderColumnUsesTheLastOccurrence() throws Exception {
+        // DuplicateHeaderMode.ALLOW_ALL: Commons CSV maps the name to the LAST column with that name
+        assertThat(expiry(files(
+                "feed_info.txt", "feed_end_date,feed_publisher_name,feed_end_date\n20270101,P,20280202\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2028, 2, 2));
+    }
+
+    @Test
+    void duplicateHeaderColumnWithTheLastOneMissingInAShortRowSkipsThatRow() throws Exception {
+        // the short row has a value in the FIRST feed_end_date column only; it is not used
+        assertThat(expiry(files(
+                "feed_info.txt", "feed_end_date,feed_publisher_name,feed_end_date\n20270101,P\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2029, 12, 31));
+    }
+
+    @Test
+    void feedInfoRowShorterThanTheHeaderIsSkippedAndFallsThrough() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", FI + "P,https://x\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2029, 12, 31));
+        assertThat(expiry(files(
+                "feed_info.txt", FI + "P,https://x\nQ,https://y,ro,20270909\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2027, 9, 9));
+    }
+
+    @Test
+    void whitespaceInsideQuotesAroundTheDateIsTrimmed() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", FI + "P,https://x,ro,\"  20271209 \"\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2027, 12, 9));
+    }
+
+    @Test
+    void spacesAroundQuotedFieldsAreIgnored() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", FI + "  \"Foo, Inc\"  ,https://x,ro,  \"20271209\"  \n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2027, 12, 9));
+    }
+
+    @Test
+    void utf8BomWithAnUnquotedHeaderOnCalendarIsIgnored() throws Exception {
+        assertThat(expiry(files(
+                "calendar.txt", "\uFEFFend_date,service_id,start_date,monday,tuesday,wednesday,thursday,friday,saturday,sunday\n"
+                        + "20271111,wk,20260101,1,1,1,1,1,0,0\n",
+                "calendar_dates.txt", CAL_DATES + "wk,20291231,1\n")))
+                .isEqualTo(LocalDate.of(2027, 11, 11));
+    }
+
+    @Test
+    void trailingCommasInTheHeaderGiveEmptyColumnNamesThatAreAllowed() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", "feed_publisher_name,feed_end_date,,\nP,20271209,,\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2027, 12, 9));
+    }
+
+    @Test
+    void blankLinesBeforeTheHeaderAreSkipped() throws Exception {
+        assertThat(expiry(files(
+                "feed_info.txt", "\n\n" + FI + "P,https://x,ro,20271209\n",
+                "calendar.txt", LATER_CAL)))
+                .isEqualTo(LocalDate.of(2027, 12, 9));
     }
 }

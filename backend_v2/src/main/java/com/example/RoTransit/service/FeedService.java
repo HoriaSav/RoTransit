@@ -2,6 +2,11 @@ package com.example.RoTransit.service;
 
 import com.example.RoTransit.entity.Feed;
 import com.example.RoTransit.repository.FeedRepository;
+import org.apache.commons.csv.CSVException;
+import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
+import org.apache.commons.csv.CSVRecord;
+import org.apache.commons.csv.DuplicateHeaderMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -11,6 +16,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -122,48 +128,53 @@ public class FeedService {
         if (entry == null) {
             return null;
         }
+        CSVFormat format = CSVFormat.DEFAULT.builder()
+                .setHeader()
+                .setSkipHeaderRecord(true)
+                .setIgnoreSurroundingSpaces(true)
+                .setIgnoreEmptyLines(true)
+                .setTrim(true)
+                .setAllowMissingColumnNames(true) // trailing commas give an empty header name
+                .setDuplicateHeaderMode(DuplicateHeaderMode.ALLOW_ALL)
+                .get();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(zip.getInputStream(entry), StandardCharsets.UTF_8))) {
-            String header = reader.readLine();
-            if (header == null) {
-                return null;
-            }
-            header = header.replace("\uFEFF", "");
-
-            String[] columns = header.split(",");
-            int index = -1;
-            for (int i = 0; i < columns.length; i++) {
-                if (columns[i].trim().replace("\"", "").equals(column)){
-                    index = i;
-                    break;
-                }
-            }
-            if (index == -1) {
-                return null;
+            // skip a UTF-8 BOM at the start, otherwise the first header name would not match
+            reader.mark(1);
+            if (reader.read() != '\uFEFF') {
+                reader.reset();
             }
 
-            LocalDate latest = null;
-            String line;
-            while ((line = reader.readLine()) != null){
-                String [] fields = line.split(",", -1);
-                if (index >= fields.length) {
-                    continue;
-                }
-                String value = fields[index].trim().replace("\"", "");
-                if (value.isEmpty()) {
-                    continue;
-                }
-                try {
-                    LocalDate d = LocalDate.parse(value, DateTimeFormatter.BASIC_ISO_DATE);
-                    if (latest == null || d.isAfter(latest)) {
-                        latest = d;
+            try (CSVParser parser = format.parse(reader)) {
+                LocalDate latest = null;
+                for (CSVRecord record : parser) {
+                    if (!record.isSet(column)) {
+                        continue; // column missing in the header, or a short row
+                    }
+                    String value = record.get(column);
+                    if (value.isEmpty()) {
+                        continue;
+                    }
+                    try {
+                        LocalDate d = LocalDate.parse(value, DateTimeFormatter.BASIC_ISO_DATE);
+                        if (latest == null || d.isAfter(latest)) {
+                            latest = d;
+                        }
+                    }
+                    catch (DateTimeParseException e) {
+                        //bad date in this row, skip it
                     }
                 }
-                catch (DateTimeParseException e) {
-                    //bad date in this row, skip it
-                }
+                return latest;
             }
-
-            return latest;
+            catch (UncheckedIOException e) {
+                // the parser wraps errors from inside the rows in this; unwrap so the catch below can see a CSVException
+                throw e.getCause();
+            }
+        }
+        catch (CSVException e) {
+            // broken CSV in this file (e.g. an unclosed quote): skip it so readExpireDate can try the next file
+            log.warn("Could not parse {} in {}, skipping it", fileName, zip.getName(), e);
+            return null;
         }
     }
 }
