@@ -1,0 +1,38 @@
+name: Backend CI
+
+on:
+  push:
+    paths: ['backend_v2/**', '.github/workflows/backend.yml']
+  pull_request:
+    paths: ['backend_v2/**', '.github/workflows/backend.yml']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend_v2
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: rotransit
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U admin -d rotransit"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      SPRING_DATASOURCE_PASSWORD: ci-only-password
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - run: ./mvnw -B test
