@@ -10,7 +10,7 @@ RoTransit is a public-transport project for Romanian cities. This README covers 
 
 - `backend_v2` is a ground-up rebuild of the old OTP-based API (see [Legacy](#legacy)). It's under active development on `horia/spring-backend-rebuild` and isn't deployed yet.
 - 13 city feeds are seeded. Download, expiry detection, scheduled refresh, the public API and the authenticated admin API all work.
-- 128 automated tests run on every push through GitHub Actions against a real Postgres.
+- An automated test suite runs on every push through GitHub Actions against a real Postgres.
 
 ## Architecture
 
@@ -116,15 +116,14 @@ cd backend_v2
 
 Tests use their own admin password (`src/test/resources/config/application.properties`), so they never depend on your real `SPRING_SECURITY_PASSWORD`.
 
-| Area | Test classes | Tests |
-|------|--------------|------:|
-| GTFS expiry detection | `FeedServiceExpireDateTest` | 21 |
-| Download & zip validation | `FeedServiceDownloadTest` | 9 |
-| Scheduled update job | `FeedUpdateJobTest` | 20 |
-| Controllers, persistence, error handling | `FeedControllerTest`, `AdminControllerTest`, `AdminRoutesContextTest`, `CreateFeedPersistenceTest`, `GlobalExceptionHandlerTest` | 49 |
-| Security (auth, roles, denied paths) | `SecurityConfigTest`, `AdminRoleSecurityTest` | 28 |
-| Application context | `RoTransitApplicationTests` | 1 |
-| **Total** | | **128** |
+| Area | Test classes |
+|------|--------------|
+| GTFS expiry detection | `FeedServiceExpireDateTest` |
+| Download & zip validation | `FeedServiceDownloadTest` |
+| Scheduled update job | `FeedUpdateJobTest` |
+| Controllers, persistence, error handling | `FeedControllerTest`, `AdminControllerTest`, `AdminRoutesContextTest`, `CreateFeedPersistenceTest`, `GlobalExceptionHandlerTest` |
+| Security (auth, roles, denied paths) | `SecurityConfigTest`, `AdminRoleSecurityTest` |
+| Application context | `RoTransitApplicationTests` |
 
 ## CI
 
