@@ -73,6 +73,6 @@ Open in Android Studio:
 
 The app talks to https://api.horiasavin.me by default.
 For a local backend on the emulator, add:
-  --dart-define=API_BASE_URL=http://10.0.2.2:8085
+  --dart-define=API_BASE_URL=http://10.0.2.2:8080
 
 INSTRUCTIONS

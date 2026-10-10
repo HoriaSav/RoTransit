@@ -8,7 +8,7 @@ For what RoTransit is as a whole, see the [project README](../README.md).
 
 ## Status
 
-- `backend_v2` is a ground-up rebuild of the old OTP-based API (see [Legacy](#legacy)). It's under active development on `horia/spring-backend-rebuild` and isn't deployed yet.
+- `backend_v2` is a ground-up rebuild of the old OTP-based API (see [Legacy](#legacy)) and is now the project's only backend. It's developed on `horia/spring-backend-rebuild`; the compose stack and the Cloudflare tunnel run it (see [Deploy](#deploy)).
 - 13 city feeds are seeded. Download, versioning, future-start versions, scheduled refresh, file cleanup, the public API and the authenticated admin API all work.
 - An automated test suite runs on every push through GitHub Actions against a real Postgres.
 
@@ -122,7 +122,17 @@ cp db/postgres/.env.example db/postgres/.env   # then set POSTGRES_PASSWORD
 docker compose up -d db
 ```
 
-Only start the `db` service. The other services in `docker-compose.yml` belong to the legacy stack. Flyway creates the `feeds` schema on first start of the app.
+Flyway creates the `feeds` schema on first start of the app.
+
+**Option A, everything in Docker:** fill in `backend_v2/.env` (step 2), then
+
+```bash
+docker compose up -d --build app   # also starts db; http://localhost:8080
+```
+
+The `app` service builds this folder's `Dockerfile` (non-root, JRE 21), reads `backend_v2/.env`, connects to `db` and keeps downloaded files in the `rotransit_feeds` volume (`/app/feeds`). Compose reads it with `format: raw`, so a bcrypt hash like `{bcrypt}$2a$10$...` is passed as is, with no quotes needed, and the same file works in IntelliJ.
+
+**Option B, app from the IDE or Maven:** keep only `db` in Docker and continue with steps 2 and 3.
 
 **2. Set environment variables** (the app has no defaults for these):
 
@@ -131,7 +141,7 @@ Only start the `db` service. The other services in `docker-compose.yml` belong t
 | `SPRING_DATASOURCE_PASSWORD` | Must match `POSTGRES_PASSWORD` from `db/postgres/.env` |
 | `SPRING_SECURITY_PASSWORD` | Password for the `admin` user. It can be plaintext or, better, a bcrypt hash with an id prefix: `{bcrypt}$2a$10$...` |
 
-[`.env.example`](.env.example) lists the variables. Spring Boot doesn't read `.env` by itself, so load it through your IDE's run configuration or export the variables in your shell. Use single quotes around a bcrypt hash so the shell doesn't expand its `$` characters.
+[`.env.example`](.env.example) lists the variables. Spring Boot doesn't read `.env` by itself, so load it through your IDE's run configuration or export the variables in your shell. If you export them in a shell instead, put single quotes around a bcrypt hash so the shell doesn't expand its `$` characters.
 
 **3. Run:**
 
@@ -191,13 +201,20 @@ Tests use their own admin password (`src/test/resources/config/application.prope
 |------|------------|
 | `backend_v2/` | **Current backend** (this folder) |
 | `.github/` | CI, CodeQL and Dependabot |
-| `db/postgres/` | Postgres env template and init script used by the `db` compose service |
-| `docker-compose.yml` | `db` is used by `backend_v2`; the other services are legacy |
+| `db/postgres/` | Postgres env template for the `db` compose service |
+| `docker-compose.yml` | `db`, `app` (this backend, port 8080) and `cloudflared` |
+| `cloudflare/`, `scripts/server/` | Tunnel env template and server setup/start scripts |
 | `frontend/` | Flutter mobile app |
-| `backend/`, `otp/`, `cloudflare/`, `scripts/server`, `scripts/db`, `scripts/backend` | Legacy stack, see below |
+
+## Deploy
+
+The home server runs the whole `docker-compose.yml` (`./scripts/server/setup.sh`, then `./scripts/server/up.sh -d --build`). `cloudflared` is a token tunnel (`TUNNEL_TOKEN` in `cloudflare/.env`), so routing is configured in the Cloudflare dashboard, not in the repo:
+
+- **Hostname:** Zero Trust → Networks → Tunnels → `rotransit-home` → Public hostname: `api.horiasavin.me` → `http://app:8080`.
+- **Admin:** add a Cloudflare Access application for `api.horiasavin.me/admin/*` with an allow policy for your own identity only, so `/admin/**` isn't reachable from the internet with just the Basic-auth password. Use the admin API locally (`localhost:8080`).
 
 ## Legacy
 
-The first version of RoTransit was a full server stack. `backend/` was a Spring Boot 3.3 API with route search, stop search, timetables, saved routes, cities and an offline-pack endpoint, backed by **OpenTripPlanner** (`otp/`) for routing and a Postgres GTFS read model (`scripts/db`, `db/postgres/init`). It was exposed publicly through a **Cloudflare** tunnel (`cloudflare/`, `scripts/server`). `backend_v2` replaces it with a much smaller feed-serving service. The old code is kept for reference and isn't built by CI.
+The first version of RoTransit was a full server stack: a Spring Boot 3.3 API (`backend/`) with route search, stop search, timetables, saved routes, cities and an offline-pack endpoint, backed by **OpenTripPlanner** (`otp/`) and a Postgres GTFS read model (`scripts/db`, `db/postgres/init`). `backend_v2` replaces it with a much smaller feed-serving service.
 
-Note: on a fresh volume, `db/postgres/init/001_init.sql` still creates the old stack's tables in the `public` schema. `backend_v2` only uses the `feeds` schema, so they don't interfere.
+The old code was removed from the repo when the stack switched to `backend_v2`. It's in git history before that commit, and on the development machine it sits in an ignored `legacy/` folder. Its tables are still in the `public` schema of existing database volumes; `backend_v2` only uses the `feeds` schema, so they don't interfere, and new volumes no longer create them.

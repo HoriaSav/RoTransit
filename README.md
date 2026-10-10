@@ -55,11 +55,15 @@ A Flutter app does the work on the device: it reads the timetable data locally a
 |-----------|------------|
 | [`frontend/`](frontend/) | Flutter app for Android and iOS |
 | [`backend_v2/`](backend_v2/) | Spring Boot feed service (Java 21, PostgreSQL). See its [README](backend_v2/README.md) |
-| `backend/`, `otp/`, `cloudflare/` | The first version: a full server stack with OpenTripPlanner routing. Kept for reference |
+| [`cloudflare/`](cloudflare/), [`scripts/server/`](scripts/server/) | Cloudflare tunnel that publishes the backend at `api.horiasavin.me`, and setup/start scripts for the server |
+| [`scripts/data/`](scripts/data/) | Builds the bundled Brașov offline pack |
+| `docker-compose.yml` | Postgres (`db`), the backend (`app`, port 8080) and the tunnel (`cloudflared`) |
+
+The first version was a full server stack with OpenTripPlanner routing (`backend/`, `otp/` and the old database scripts). It has been retired: the code lives in git history before the switch to `backend_v2`, and locally in an ignored `legacy/` folder.
 
 ## Status
 
-RoTransit is in development. The backend is being rebuilt on the `horia/spring-backend-rebuild` branch, and the app doesn't use the new backend yet. Nothing is deployed or published in an app store yet.
+RoTransit is in development on the `horia/spring-backend-rebuild` branch. The app and the server stack now run on `backend_v2`. Nothing is deployed or published in an app store yet.
 
 ## Quick start
 

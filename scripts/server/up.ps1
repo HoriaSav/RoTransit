@@ -18,7 +18,7 @@ try {
     if ($Detached) { $args += "-d" }
     if ($Build) { $args += "--build" }
 
-    Write-Host "Starting RoTransit stack..."
+    Write-Host "Starting RoTransit stack (db, backend_v2 app on :8080, cloudflared)..."
     & docker @args
 }
 finally {

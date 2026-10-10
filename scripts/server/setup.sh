@@ -50,17 +50,15 @@ echo "RoTransit server setup (repo root: $REPO_ROOT)"
 ensure_env_file "$REPO_ROOT/db/postgres/.env.example" "$REPO_ROOT/db/postgres/.env" "Postgres env"
 ensure_env_file "$REPO_ROOT/cloudflare/.env.example" "$REPO_ROOT/cloudflare/.env" "Cloudflare env"
 
-if [[ ! -f "$REPO_ROOT/otp/gtfs/ro-ratbv.zip" ]]; then
-  echo "Missing GTFS feed: otp/gtfs/ro-ratbv.zip (see README.md, Run it)" >&2
-  exit 1
-fi
-echo "[ok] GTFS feed present: otp/gtfs/ro-ratbv.zip"
+ensure_env_file "$REPO_ROOT/backend_v2/.env.example" "$REPO_ROOT/backend_v2/.env" "Backend env"
 
-if ! compgen -G "$REPO_ROOT/otp/osm/*.pbf" > /dev/null; then
-  echo "[warn] No OSM .pbf found under otp/osm/ — OTP graph build may fail until you add one (see README.md, Run it)"
-else
-  echo "[ok] OSM extract present under otp/osm/"
-fi
+for var in SPRING_DATASOURCE_PASSWORD SPRING_SECURITY_PASSWORD; do
+  if ! grep -Eq "^${var}=.+" "$REPO_ROOT/backend_v2/.env"; then
+    echo "[action] Set ${var} in backend_v2/.env (see backend_v2/README.md, Run locally)" >&2
+    exit 1
+  fi
+done
+echo "[ok] backend_v2/.env has both passwords set"
 
 docker compose version >/dev/null
 echo "[ok] Docker Compose is available"
@@ -70,8 +68,10 @@ if [[ "$SKIP_TUNNEL_TOKEN_CHECK" -eq 0 ]]; then
 fi
 
 echo ""
-echo "Setup complete. Start the stack with:"
+echo "Setup complete. Start the stack (db, app on :8080, cloudflared) with:"
 echo "  ./scripts/server/up.sh"
 echo ""
-echo "Public API (after cloudflared is running): https://api.horiasavin.me"
+echo "In Cloudflare (Zero Trust -> Tunnels -> rotransit-home -> Public hostname) api.horiasavin.me must target http://app:8080,"
+echo "and /admin/* should be blocked by a Cloudflare Access policy."
+echo "Public API (after cloudflared is running): https://api.horiasavin.me/api/feeds"
 echo "Flutter: flutter run --dart-define=API_BASE_URL=https://api.horiasavin.me"

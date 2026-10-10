@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/branding/operator_branding.dart';
 import '../../../core/network/api_client.dart';
 import '../domain/route_models.dart';
 
@@ -41,21 +42,39 @@ class RouteApiRepository {
   }
 
   Future<List<CityItem>> _fetchCitiesFromNetwork() async {
-    final response = await _dio.get('/api/cities');
-    final raw = response.data;
-    final List<dynamic> items;
-    if (raw is List<dynamic>) {
-      items = raw;
-    } else if (raw is Map<String, dynamic>) {
-      final nested = raw['items'] ?? raw['content'] ?? raw['data'] ?? const [];
-      items = nested is List<dynamic> ? nested : const [];
-    } else {
-      items = const [];
-    }
-    return items
-        .whereType<Map<String, dynamic>>()
-        .map(CityItem.fromJson)
-        .where((c) => c.id.isNotEmpty)
-        .toList();
+    final response = await _dio.get('/api/feeds');
+    return citiesFromFeeds(response.data);
   }
+}
+
+/// Maps the backend_v2 `GET /api/feeds` list (FeedSummary) to picker cities.
+///
+/// The id is the feed id as a string, except Brasov, which keeps
+/// [kBrasovCityId] so the bundled companion pack and saved state still match.
+/// A city with several feeds appears once (first feed wins).
+List<CityItem> citiesFromFeeds(Object? raw) {
+  final List<dynamic> items;
+  if (raw is List<dynamic>) {
+    items = raw;
+  } else if (raw is Map<String, dynamic>) {
+    final nested = raw['items'] ?? raw['content'] ?? raw['data'] ?? const [];
+    items = nested is List<dynamic> ? nested : const [];
+  } else {
+    items = const [];
+  }
+  final seen = <String>{};
+  final cities = <CityItem>[];
+  for (final feed in items.whereType<Map<String, dynamic>>()) {
+    final feedId = (feed['id'] ?? '').toString().trim();
+    final name = (feed['cityName'] ?? '').toString().trim();
+    if (feedId.isEmpty || name.isEmpty) continue;
+    if (!seen.add(name.toLowerCase())) continue;
+    final isBrasov = isCityAvailable(cityId: '', cityName: name);
+    cities.add(CityItem(
+      id: isBrasov ? kBrasovCityId : feedId,
+      name: name,
+      country: 'RO',
+    ));
+  }
+  return cities;
 }

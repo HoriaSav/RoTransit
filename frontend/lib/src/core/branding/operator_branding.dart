@@ -5,7 +5,8 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_extra_colors.dart';
 
-/// Stable Brasov city id from [db/postgres/init/001_init.sql].
+/// Stable Brasov city id (from the first backend's seed). The bundled companion
+/// pack and saved state use it, so the backend_v2 Brasov feed is mapped to it.
 const kBrasovCityId = '93715d42-5523-4195-8743-53b6819488c9';
 
 /// Display name matching the Postgres seed (no diacritics in the DB row).

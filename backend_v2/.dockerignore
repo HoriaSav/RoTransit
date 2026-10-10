@@ -1,0 +1,12 @@
+target/
+feeds/
+.env
+.env.*
+.idea/
+*.iml
+.vscode/
+.git
+HELP.md
+Shortcuts.md
+README.md
+*.log

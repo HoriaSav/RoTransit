@@ -123,14 +123,21 @@ class UserMessageResolver {
     return AppUserMessages.serverUnreachable;
   }
 
-  static String? _backendErrorCode(DioException error) {
-    final data = error.response?.data;
-    if (data is Map<String, dynamic>) {
-      final code = data['code'];
-      if (code is String && code.trim().isNotEmpty) return code.trim();
-    }
-    return null;
+  static String? _backendErrorCode(DioException error) =>
+      backendErrorCode(error.response?.data);
+}
+
+/// Short error label from a backend body: the old `{code: ...}` shape, or a
+/// backend_v2 ProblemDetail (`title` / `detail` / `status`).
+String? backendErrorCode(Object? data) {
+  if (data is! Map) return null;
+  for (final key in const ['code', 'title', 'detail']) {
+    final value = data[key];
+    if (value is String && value.trim().isNotEmpty) return value.trim();
   }
+  final status = data['status'];
+  if (status is int) return 'HTTP $status';
+  return null;
 }
 
 typedef AppUserMessages = AppUserMessage;

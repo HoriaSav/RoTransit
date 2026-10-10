@@ -24,7 +24,7 @@ jobs:
         with:
           languages: java-kotlin
           build-mode: none
-          # Only the current backend; skips the legacy backend/ and the Flutter app
+          # Only the backend (backend_v2); skips the Flutter app
           config: |
             paths:
               - backend_v2

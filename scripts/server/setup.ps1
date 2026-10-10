@@ -55,18 +55,18 @@ try {
         -TargetPath (Join-Path $repoRoot "cloudflare\.env") `
         -Label "Cloudflare env"
 
-    $gtfsZip = Join-Path $repoRoot "otp\gtfs\ro-ratbv.zip"
-    if (-not (Test-Path $gtfsZip)) {
-        throw "Missing GTFS feed: otp/gtfs/ro-ratbv.zip (see README.md, Run it)"
-    }
-    Write-Host '[ok] GTFS feed present: otp/gtfs/ro-ratbv.zip'
+    $backendEnv = Join-Path $repoRoot "backend_v2\.env"
+    Ensure-EnvFile `
+        -ExamplePath (Join-Path $repoRoot "backend_v2\.env.example") `
+        -TargetPath $backendEnv `
+        -Label "Backend env"
 
-    $osmDir = Join-Path $repoRoot "otp\osm"
-    if (-not (Test-Path $osmDir) -or -not (Get-ChildItem $osmDir -Filter *.pbf -ErrorAction SilentlyContinue)) {
-        Write-Host '[warn] No OSM .pbf found under otp/osm/ - OTP graph build may fail until you add one (see README.md, Run it)'
-    } else {
-        Write-Host '[ok] OSM extract present under otp/osm/'
+    foreach ($var in @('SPRING_DATASOURCE_PASSWORD', 'SPRING_SECURITY_PASSWORD')) {
+        if (-not (Select-String -Path $backendEnv -Pattern "^$var=.+" -Quiet)) {
+            throw "Set $var in backend_v2/.env (see backend_v2/README.md, Run locally)"
+        }
     }
+    Write-Host '[ok] backend_v2/.env has both passwords set'
 
     docker compose version | Out-Null
     Write-Host '[ok] Docker Compose is available'
@@ -79,10 +79,12 @@ try {
     }
 
     Write-Host ""
-    Write-Host "Setup complete. Start the stack with:"
+    Write-Host "Setup complete. Start the stack (db, app on :8080, cloudflared) with:"
     Write-Host "  .\scripts\server\up.ps1"
     Write-Host ""
-    Write-Host "Public API (after cloudflared is running): https://api.horiasavin.me"
+    Write-Host "In Cloudflare (Zero Trust -> Tunnels -> rotransit-home -> Public hostname) api.horiasavin.me must target http://app:8080,"
+    Write-Host "and /admin/* should be blocked by a Cloudflare Access policy."
+    Write-Host "Public API (after cloudflared is running): https://api.horiasavin.me/api/feeds"
     Write-Host "Flutter: flutter run --dart-define=API_BASE_URL=https://api.horiasavin.me"
 }
 finally {

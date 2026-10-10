@@ -5,7 +5,7 @@ Output: frontend/assets/data/brasov_companion.sqlite.gz (the raw .sqlite is
 deleted after compressing) plus a short manifest JSON next to it.
 
 Does not require the RoTransit backend. Source GTFS is typically gitignored
-under otp/gtfs/ro-ratbv.zip (ODbL / osm2gtfs unofficial RATBV feed).
+under scripts/data/gtfs/ro-ratbv.zip (ODbL / osm2gtfs unofficial RATBV feed).
 """
 from __future__ import annotations
 
@@ -487,7 +487,7 @@ def main() -> None:
     parser.add_argument(
         "--gtfs",
         type=Path,
-        default=repo / "otp" / "gtfs" / "ro-ratbv.zip",
+        default=repo / "scripts" / "data" / "gtfs" / "ro-ratbv.zip",
     )
     parser.add_argument(
         "--out",

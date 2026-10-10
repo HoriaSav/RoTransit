@@ -1,6 +1,6 @@
 # RoTransit app
 
-The Flutter app for Android and iOS. For what RoTransit is and why, see the [project README](../README.md). The full technical spec is in [docs/TECHNICAL_SPEC.md](../docs/TECHNICAL_SPEC.md).
+The Flutter app for Android and iOS. For what RoTransit is and why, see the [project README](../README.md).
 
 ## Features
 
@@ -15,13 +15,13 @@ There is no account, no routing and no trip planning.
 ## Where the data comes from
 
 - **Brașov timetables** come from the bundled pack in `assets/data/`, which is extracted to a local SQLite file on first launch. Boards and timetables work offline.
-- **The backend** is only used for the city list in Settings. Station search runs on the local pack. The base URL is set with `API_BASE_URL` (default `https://api.horiasavin.me`, the first-version backend). The app doesn't use `backend_v2` yet.
+- **The backend** ([`backend_v2`](../backend_v2/)) is only used for the city list in Settings: `GET /api/feeds`, one entry per city (Brașov keeps its built-in id so it matches the bundled pack). Station search runs on the local pack. The base URL is set with `API_BASE_URL` (default `https://api.horiasavin.me`). Error responses are read as ProblemDetail (`title`/`detail`/`status`).
 - **Favourites and settings** are stored in SharedPreferences.
 
 | Target | `API_BASE_URL` |
 |--------|----------------|
 | Physical phone | `https://api.horiasavin.me` (default) |
-| Android emulator with a local backend | `http://10.0.2.2:8085` |
+| Android emulator with a local backend | `http://10.0.2.2:8080` |
 
 ## Structure
 
@@ -49,7 +49,7 @@ Needs Flutter 3.27 (the `path` override in `pubspec.yaml` depends on it; CI uses
 flutter pub get
 flutter run
 # emulator against a local backend
-flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8085
+flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8080
 ```
 
 From Android Studio: run `./scripts/setup-android-studio.sh` once from the repo root, open this `frontend` folder (not `android/` or the repo root), set Gradle JDK 21, pick a device and run `main.dart`.
@@ -75,7 +75,7 @@ Without those files a release build fails on purpose, so a debug-signed build ne
 
 ## Brașov companion pack
 
-`assets/data/brasov_companion.sqlite.gz` is extracted on first launch, and again whenever `pack_version` in `assets/data/brasov_companion.manifest.json` changes. To rebuild it from the repo root (needs `otp/gtfs/ro-ratbv.zip`):
+`assets/data/brasov_companion.sqlite.gz` is extracted on first launch, and again whenever `pack_version` in `assets/data/brasov_companion.manifest.json` changes. To rebuild it from the repo root (needs the osm2gtfs feed at `scripts/data/gtfs/ro-ratbv.zip`, which is gitignored):
 
 ```bash
 python3 scripts/data/build_brasov_companion_pack.py

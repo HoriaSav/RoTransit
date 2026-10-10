@@ -17,24 +17,11 @@ venv/
 *.swp
 *.swo
 
-# OTP data
-otp/gtfs/
-otp/osm/
-otp/graph
+# Old stack (Java backend, OTP, old DB scripts): kept on disk only, see git history before the backend_v2 switch
+legacy/
 
-# OTP runtime / build artifacts (Docker bind-mount ./otp may write these)
-otp/*.obj
-otp/*.obj.gz
-otp/graphs/
-otp/**/*.log
-otp/tmp/
-otp/temp/
-otp/.cache/
-# Accidental large dataset drops at otp/ root (use ignored gtfs/ and osm/ instead)
-otp/*.pbf
-otp/*.osm
-otp/*.osm.pbf
-otp/*.zip
+# Offline-pack source GTFS (osm2gtfs Brasov feed, large binary)
+scripts/data/gtfs/
 
 # IDE / OS files
 .vscode/
@@ -45,9 +32,6 @@ Thumbs.db
 
 # Local environment files
 **/.env
-
-# Backend build outputs
-backend/target/
 
 # backend_v2 build output and downloaded GTFS zips (do not upload)
 backend_v2/target/
@@ -69,3 +53,6 @@ backend-*.log
 
 # Raw companion pack (only the .gz is shipped)
 frontend/assets/data/*.sqlite
+
+# Spring Initializr boilerplate
+backend_v2/HELP.md
