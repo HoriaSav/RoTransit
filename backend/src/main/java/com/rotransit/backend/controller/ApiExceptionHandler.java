@@ -3,7 +3,6 @@ package com.rotransit.backend.controller;
 import com.rotransit.backend.otp.OtpException;
 import com.rotransit.backend.config.RequestCorrelationFilter;
 import com.rotransit.backend.service.CityNotFoundException;
-import com.rotransit.backend.service.SavedRouteNotFoundException;
 import com.rotransit.backend.service.StopNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
@@ -28,17 +27,6 @@ public class ApiExceptionHandler {
     public ApiErrorResponse handleCityNotFound(CityNotFoundException ex, HttpServletRequest request) {
         return error(
                 "CITY_NOT_FOUND",
-                ex.getMessage(),
-                request,
-                Map.of()
-        );
-    }
-
-    @ExceptionHandler(SavedRouteNotFoundException.class)
-    @ResponseStatus(HttpStatus.NOT_FOUND)
-    public ApiErrorResponse handleSavedRouteNotFound(SavedRouteNotFoundException ex, HttpServletRequest request) {
-        return error(
-                "SAVED_ROUTE_NOT_FOUND",
                 ex.getMessage(),
                 request,
                 Map.of()

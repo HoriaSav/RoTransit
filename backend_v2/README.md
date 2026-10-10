@@ -180,6 +180,8 @@ Tests use their own admin password (`src/test/resources/config/application.prope
 | Workflow | What it does |
 |----------|--------------|
 | [`backend.yml`](../.github/workflows/backend.yml) | Runs on every push and pull request that touches `backend_v2/**` or the workflow. Starts a `postgres:16` service container, sets up Temurin JDK 21 with a Maven cache and runs `./mvnw -B test`. Uploads the JaCoCo report as the `jacoco-report` artifact and writes a coverage summary to the run page. The badge at the top shows the latest result |
+| [`frontend.yml`](../.github/workflows/frontend.yml) | Runs on every push and pull request that touches `frontend/**` or the workflow. Sets up Flutter 3.27.4 (stable, cached) and runs `flutter pub get`, `flutter analyze` and `flutter test` in `frontend/`. The Frontend CI badge in the root README shows the latest result |
+| [`feed-health.yml`](../.github/workflows/feed-health.yml) | Every night at 02:17 UTC, and by hand from the Actions tab. [`feed_health.py`](../.github/scripts/feed_health.py) downloads every feed seeded in `V2__seed_feeds.sql` from the Mobility Database, checks that it is a valid zip and how many days it has left, and writes a table to the run page. Broken feeds and feeds with fewer than 7 days left are listed in one open issue labelled `feed-health`, which is closed again once everything is healthy. Run it locally with `python3 .github/scripts/feed_health.py --dry-run` |
 | [`codeql.yml`](../.github/workflows/codeql.yml) | CodeQL security analysis of `backend_v2` on pushes and pull requests that touch it, and weekly on Mondays |
 | [`dependabot.yml`](../.github/dependabot.yml) | Weekly update PRs for the Maven dependencies and the GitHub Actions. GitHub only reads it from the default branch |
 

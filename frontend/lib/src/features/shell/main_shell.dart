@@ -80,7 +80,6 @@ class _MainShellState extends ConsumerState<MainShell> {
               fit: StackFit.expand,
               children: [
                 _ShellMapLayer(),
-                _SearchGradientOverlay(),
                 _ShellTabPages(),
                 _ShellFloatingNavBarSlot(),
                 _SettingsOverlay(),
@@ -104,24 +103,13 @@ class _ShellMapLayer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final index = ref.watch(selectedTabProvider);
-    final mapOverlayVisible = ref.watch(mapShellOverlayVisibleProvider);
-    final mapSurfaceActive = index == 0 || mapOverlayVisible;
 
     return Positioned.fill(
       child: TickerMode(
-        enabled: mapSurfaceActive,
+        enabled: index == 0,
         child: const MapTab(),
       ),
     );
-  }
-}
-
-class _SearchGradientOverlay extends ConsumerWidget {
-  const _SearchGradientOverlay();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return const SizedBox.shrink();
   }
 }
 
@@ -131,30 +119,15 @@ class _ShellTabPages extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final index = ref.watch(selectedTabProvider);
-    final mapOverlayVisible = ref.watch(mapShellOverlayVisibleProvider);
-    final pages = [
+    const pages = [
       // Map companion chrome (search stations). Map stays interactive underneath.
-      IgnorePointer(
-        ignoring: false,
-        child: Opacity(
-          opacity: 1,
-          child: const MapCompanionTab(),
-        ),
-      ),
-      const BusTab(),
-      IgnorePointer(
-        ignoring: mapOverlayVisible,
-        child: Opacity(
-          opacity: mapOverlayVisible ? 0 : 1,
-          child: const FavoritesTab(),
-        ),
-      ),
+      MapCompanionTab(),
+      BusTab(),
+      FavoritesTab(),
     ];
 
-    final safeIndex = index.clamp(0, pages.length - 1);
-
     return Positioned.fill(
-      child: IndexedStack(index: safeIndex, children: pages),
+      child: IndexedStack(index: index, children: pages),
     );
   }
 }
@@ -175,22 +148,7 @@ class _ShellFloatingNavBarSlot extends ConsumerWidget {
       child: ShellFloatingNavBar(
         selectedIndex: index,
         onDestinationSelected: (value) {
-          final current = ref.read(selectedTabProvider);
-          if (value != 0) {
-            ref.read(showMapSheetProvider.notifier).state = false;
-            ref.read(mapSelectionTargetProvider.notifier).state = null;
-            ref.read(routeMapOverlaySuppressedProvider.notifier).state = true;
-          } else if (value == 0 && current != 0) {
-            ref.read(showMapSheetProvider.notifier).state = false;
-            ref.read(mapSelectionTargetProvider.notifier).state = null;
-            ref.read(routeMapOverlaySuppressedProvider.notifier).state = true;
-            if (ref.read(searchMapStateProvider).openedFromSavedFavorite) {
-              ref
-                  .read(searchMapStateProvider.notifier)
-                  .closeFavoriteMapPreview();
-            }
-          }
-          ref.read(selectedTabProvider.notifier).state = value.clamp(0, 2);
+          ref.read(selectedTabProvider.notifier).state = value;
         },
       ),
     );

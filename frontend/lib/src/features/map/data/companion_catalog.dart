@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -13,6 +16,9 @@ import '../../routes/data/stop_suggestion_dedupe.dart';
 
 /// Asset path for the gzipped Brașov companion SQLite pack.
 const kBrasovCompanionAssetGz = 'assets/data/brasov_companion.sqlite.gz';
+
+/// Manifest written next to the pack by `scripts/data/build_brasov_companion_pack.py`.
+const kBrasovCompanionManifest = 'assets/data/brasov_companion.manifest.json';
 
 class CompanionPackMeta {
   const CompanionPackMeta({
@@ -43,6 +49,9 @@ class StopBoardDeparture {
     required this.headsign,
     required this.departureTime,
     required this.tripId,
+    this.firstStopName = '',
+    this.lastStopName = '',
+    this.minutesAfterStart = 0,
   });
 
   final String routeId;
@@ -52,11 +61,29 @@ class StopBoardDeparture {
   final String headsign;
   final String departureTime;
   final String tripId;
+
+  /// Where this trip starts and ends (both ends of the ride).
+  final String firstStopName;
+  final String lastStopName;
+
+  /// Wall-clock minutes after the board's start time.
+  final int minutesAfterStart;
 }
+
+/// Top-level so the isolate closure captures only the bytes.
+List<int> _gunzip(Uint8List bytes) => gzip.decode(bytes);
 
 final companionCatalogProvider = Provider<CompanionCatalog>((ref) {
   return CompanionCatalog.instance;
 });
+
+/// The pack's last service date when [now]'s day is after it (the
+/// timetables ended and the app needs an update), else null.
+Future<DateTime?> feedEndedOn(CompanionCatalog catalog, DateTime now) async {
+  final range = await catalog.feedDateRange();
+  final today = DateTime(now.year, now.month, now.day);
+  return range != null && today.isAfter(range.end) ? range.end : null;
+}
 
 /// Read-only Brașov catalog shipped in the app binary (no RoTransit server).
 class CompanionCatalog {
@@ -68,6 +95,22 @@ class CompanionCatalog {
   CompanionPackMeta? _meta;
   List<StopSearchItem>? _allStops;
   Map<String, BusLine>? _routesById;
+  Map<String, String>? _dayOverrides;
+  ({DateTime start, DateTime end})? _feedRange;
+
+  /// Drops the open handle and caches (tests use a fresh documents dir each).
+  @visibleForTesting
+  Future<void> reset() async {
+    final db = _db;
+    _db = null;
+    _openFuture = null;
+    _meta = null;
+    _allStops = null;
+    _routesById = null;
+    _dayOverrides = null;
+    _feedRange = null;
+    await db?.close();
+  }
 
   Future<Database> _ensureDb() {
     final existing = _db;
@@ -88,15 +131,27 @@ class CompanionCatalog {
     }
     final dbPath = p.join(dir.path, 'brasov_companion.sqlite');
     final markerPath = p.join(dir.path, 'brasov_companion.asset_rev');
-    const assetRev = '1';
+    // Re-extract whenever the bundled pack changes (new app build with new data).
+    final manifest = jsonDecode(
+      await rootBundle.loadString(kBrasovCompanionManifest),
+    ) as Map<String, dynamic>;
+    final assetRev = (manifest['pack_version'] ?? '').toString().trim();
+    if (assetRev.isEmpty) {
+      // An empty marker never changes, so the pack would never be refreshed.
+      throw StateError('$kBrasovCompanionManifest has no pack_version');
+    }
     final marker = File(markerPath);
     final needsCopy = !File(dbPath).existsSync() ||
         !marker.existsSync() ||
         (await marker.readAsString()).trim() != assetRev;
     if (needsCopy) {
       final gz = await rootBundle.load(kBrasovCompanionAssetGz);
-      final raw = gzip.decode(gz.buffer.asUint8List());
-      await File(dbPath).writeAsBytes(raw, flush: true);
+      final bytes = gz.buffer.asUint8List(gz.offsetInBytes, gz.lengthInBytes);
+      // ~27 MB decode: keep it off the UI isolate.
+      final raw = await Isolate.run(() => _gunzip(bytes));
+      final dbFile = File(dbPath);
+      if (dbFile.existsSync()) await dbFile.delete();
+      await dbFile.writeAsBytes(raw, flush: true);
       await marker.writeAsString(assetRev);
     }
     final db = await openDatabase(dbPath, readOnly: true, singleInstance: false);
@@ -209,6 +264,32 @@ class CompanionCatalog {
     return 'MONFRI';
   }
 
+  /// YYYY-MM-DD (also how dates are shown next to the pack's data date).
+  static String isoDate(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// Which weekday schedule [date] runs: public holidays from GTFS
+  /// `calendar_dates` (pack table `day_overrides`) win over the weekday.
+  /// Not used by [timetable] (weekly tab shows the regular pattern) nor by
+  /// [stopBoard] (filters by service directly).
+  Future<String> serviceDayKindFor(DateTime date) async {
+    var overrides = _dayOverrides;
+    if (overrides == null) {
+      final db = await _ensureDb();
+      overrides = <String, String>{};
+      try {
+        final rows = await db.query('day_overrides');
+        for (final r in rows) {
+          overrides[r['service_date'] as String] = r['day_kind'] as String;
+        }
+      } on DatabaseException {
+        // Older pack without the table: weekday only.
+      }
+      _dayOverrides = overrides;
+    }
+    return overrides[isoDate(date)] ?? dayKindFor(date);
+  }
+
   /// HH:MM or HH:MM:SS → minutes since midnight (allows >24h).
   static int? timeToMinutes(String raw) {
     final parts = raw.trim().split(':');
@@ -217,6 +298,15 @@ class CompanionCatalog {
     final m = int.tryParse(parts[1]);
     if (h == null || m == null) return null;
     return h * 60 + m;
+  }
+
+  /// HH:MM[:SS] → seconds since midnight (allows >24h).
+  static int? timeToSeconds(String raw) {
+    final mins = timeToMinutes(raw);
+    if (mins == null) return null;
+    final parts = raw.trim().split(':');
+    final s = parts.length > 2 ? int.tryParse(parts[2]) ?? 0 : 0;
+    return mins * 60 + s;
   }
 
   static String minutesToHhMm(int minutes) {
@@ -233,6 +323,8 @@ class CompanionCatalog {
   }) async {
     final db = await _ensureDb();
     final dir = directionId ?? '0';
+    // The weekly tab shows the regular Mon–Fri / Sat / Sun pattern; a
+    // holiday in this week does not change it (the dated stop board does).
     final dayKind = dayKindFor(serviceDate);
     final rows = await db.query(
       'departures',
@@ -242,8 +334,7 @@ class CompanionCatalog {
       whereArgs: [routeId, stopId, dir, dayKind],
       orderBy: 'departure_time ASC',
     );
-    final iso =
-        '${serviceDate.year.toString().padLeft(4, '0')}-${serviceDate.month.toString().padLeft(2, '0')}-${serviceDate.day.toString().padLeft(2, '0')}';
+    final iso = isoDate(serviceDate);
     return StopTimetable(
       cityId: kBrasovCityId,
       routeId: routeId,
@@ -261,7 +352,60 @@ class CompanionCatalog {
     );
   }
 
+  /// First and last date any service in the pack runs (GTFS calendar range
+  /// plus added dates). After the end the board has nothing to show.
+  Future<({DateTime start, DateTime end})?> feedDateRange() async {
+    final cached = _feedRange;
+    if (cached != null) return cached;
+    final db = await _ensureDb();
+    final rows = await db.rawQuery('''
+      SELECT MIN(d) AS first, MAX(d) AS last FROM (
+        SELECT start_date AS d FROM services
+        UNION ALL SELECT end_date FROM services
+        UNION ALL SELECT service_date FROM service_exceptions
+          WHERE exception_type = 1
+      )
+    ''');
+    final first = DateTime.tryParse(rows.first['first'] as String? ?? '');
+    final last = DateTime.tryParse(rows.first['last'] as String? ?? '');
+    if (first == null || last == null) return null;
+    return _feedRange = (start: first, end: last);
+  }
+
+  /// Service days a stop board starting at [from] needs, with each day's
+  /// minute offset from [from]'s midnight: the previous day (GTFS times
+  /// >= 24:00), today and, when the window crosses midnight, the next day.
+  ///
+  /// Uses calendar dates, not `Duration(days: 1)`, which lands on the wrong
+  /// day around DST changes.
+  static List<(DateTime, int)> stopBoardServiceDays(
+    DateTime from,
+    int windowMinutes,
+  ) {
+    final endMin = from.hour * 60 + from.minute + windowMinutes;
+    return [
+      (DateTime(from.year, from.month, from.day - 1), -24 * 60),
+      (DateTime(from.year, from.month, from.day), 0),
+      if (endMin > 24 * 60)
+        (DateTime(from.year, from.month, from.day + 1), 24 * 60),
+    ];
+  }
+
+  static const _weekdayColumns = [
+    'monday',
+    'tuesday',
+    'wednesday',
+    'thursday',
+    'friday',
+    'saturday',
+    'sunday',
+  ];
+
   /// Scheduled departures at [stopId] from [from] for [windowMinutes].
+  ///
+  /// Only trips whose GTFS service runs on that date are included (calendar
+  /// weekdays and date range, plus `calendar_dates` additions/removals), so
+  /// holidays and school-only trips follow the feed.
   Future<List<StopBoardDeparture>> stopBoard({
     required String stopId,
     required DateTime from,
@@ -269,108 +413,64 @@ class CompanionCatalog {
   }) async {
     final db = await _ensureDb();
     final routes = await routesById();
-    final dayKind = dayKindFor(from);
     final startMin = from.hour * 60 + from.minute;
     final endMin = startMin + windowMinutes;
-    final rows = await db.query(
-      'departures',
-      where: 'stop_id = ? AND day_kind = ?',
-      whereArgs: [stopId, dayKind],
-      orderBy: 'departure_time ASC',
-    );
-    final out = <StopBoardDeparture>[];
-    for (final r in rows) {
-      final dep = r['departure_time'] as String? ?? '';
-      final mins = timeToMinutes(dep);
-      if (mins == null) continue;
-      // Same calendar day window; also allow next-day wrap within 24h+slack.
-      final candidates = <int>[mins, mins + 24 * 60];
-      var matched = false;
-      for (final c in candidates) {
-        if (c >= startMin && c < endMin) {
-          matched = true;
-          break;
-        }
+    // (effective seconds from [from]'s midnight, row)
+    final found = <(int, StopBoardDeparture)>[];
+    for (final (day, offset) in stopBoardServiceDays(from, windowMinutes)) {
+      final iso = isoDate(day);
+      final weekdayColumn = _weekdayColumns[day.weekday - 1];
+      final rows = await db.rawQuery(
+        '''
+        WITH active(service_id) AS (
+          SELECT service_id FROM services
+            WHERE $weekdayColumn = 1 AND ? BETWEEN start_date AND end_date
+          UNION
+          SELECT service_id FROM service_exceptions
+            WHERE service_date = ? AND exception_type = 1
+          EXCEPT
+          SELECT service_id FROM service_exceptions
+            WHERE service_date = ? AND exception_type = 2
+        )
+        SELECT DISTINCT d.route_id, d.direction_id, d.trip_id, d.headsign,
+          d.departure_time, t.first_stop_name, t.last_stop_name
+        FROM departures d
+        LEFT JOIN trips t ON t.trip_id = d.trip_id
+        WHERE d.stop_id = ? AND d.service_id IN (SELECT service_id FROM active)
+        ''',
+        [iso, iso, iso, stopId],
+      );
+      for (final r in rows) {
+        final dep = r['departure_time'] as String? ?? '';
+        final secs = timeToSeconds(dep);
+        if (secs == null) continue;
+        final at = secs ~/ 60 + offset;
+        if (at < startMin || at >= endMin) continue;
+        final routeId = r['route_id'] as String;
+        final line = routes[routeId];
+        found.add((
+          secs + offset * 60,
+          StopBoardDeparture(
+            routeId: routeId,
+            shortName: line?.shortName ?? routeId,
+            longName: line?.longName ?? '',
+            directionId: r['direction_id'] as String? ?? '0',
+            headsign: r['headsign'] as String? ?? '',
+            departureTime: dep,
+            tripId: r['trip_id'] as String? ?? '',
+            firstStopName: r['first_stop_name'] as String? ?? '',
+            lastStopName: r['last_stop_name'] as String? ?? '',
+            minutesAfterStart: at - startMin,
+          ),
+        ));
       }
-      if (!matched) continue;
-      final routeId = r['route_id'] as String;
-      final line = routes[routeId];
-      out.add(
-        StopBoardDeparture(
-          routeId: routeId,
-          shortName: line?.shortName ?? routeId,
-          longName: line?.longName ?? '',
-          directionId: r['direction_id'] as String? ?? '0',
-          headsign: r['headsign'] as String? ?? '',
-          departureTime: dep,
-          tripId: r['trip_id'] as String? ?? '',
-        ),
-      );
     }
-    out.sort((a, b) {
-      final am = timeToMinutes(a.departureTime) ?? 0;
-      final bm = timeToMinutes(b.departureTime) ?? 0;
-      final aAdj = am < startMin ? am + 24 * 60 : am;
-      final bAdj = bm < startMin ? bm + 24 * 60 : bm;
-      return aAdj.compareTo(bAdj);
+    // Total order (time to the second, then GTFS trip_id) so rows never swap
+    // places when the window grows.
+    found.sort((a, b) {
+      final byTime = a.$1.compareTo(b.$1);
+      return byTime != 0 ? byTime : a.$2.tripId.compareTo(b.$2.tripId);
     });
-    return out;
-  }
-
-  /// Ensures LocalDb offline meta/lines exist so Bus tab treats the pack as installed.
-  Future<void> mirrorMetaIntoLocalOfflineCache(
-    Future<void> Function(Map<String, dynamic> packJson) applyPack,
-  ) async {
-    final m = await meta();
-    final buses = await listBuses();
-    final db = await _ensureDb();
-    final routeStopRows = await db.query('route_stops');
-    final byKey = <String, List<Map<String, dynamic>>>{};
-    for (final r in routeStopRows) {
-      final key = '${r['route_id']}|${r['direction_id']}';
-      byKey.putIfAbsent(key, () => []).add({
-        'stopId': r['stop_id'],
-        'name': r['name'],
-        'lat': r['lat'],
-        'lon': r['lon'],
-        'stopSequence': r['stop_sequence'],
-      });
-    }
-    final routeStops = <Map<String, dynamic>>[];
-    for (final entry in byKey.entries) {
-      final parts = entry.key.split('|');
-      entry.value.sort(
-        (a, b) =>
-            ((a['stopSequence'] as num?) ?? 0).compareTo((b['stopSequence'] as num?) ?? 0),
-      );
-      routeStops.add({
-        'routeId': parts[0],
-        'directionId': parts[1],
-        'stops': entry.value,
-      });
-    }
-
-    // Timetables: leave empty here — Bus tab queries companion via repository bridge.
-    final pack = {
-      'cityId': m.cityId,
-      'anchorMonday': m.anchorMonday.isEmpty ? '2026-01-19' : m.anchorMonday,
-      'generatedAt': m.generatedAt.isEmpty
-          ? DateTime.now().toUtc().toIso8601String()
-          : m.generatedAt,
-      'packVersion': m.packVersion,
-      'buses': buses
-          .map(
-            (b) => {
-              'routeId': b.routeId,
-              'shortName': b.shortName,
-              'longName': b.longName,
-              'mode': b.mode,
-            },
-          )
-          .toList(),
-      'routeStops': routeStops,
-      'timetables': <Map<String, dynamic>>[],
-    };
-    await applyPack(pack);
+    return [for (final f in found) f.$2];
   }
 }

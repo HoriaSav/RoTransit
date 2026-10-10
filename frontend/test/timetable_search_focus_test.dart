@@ -89,7 +89,7 @@ void main() {
     );
   });
 
-  testWidgets('line list shows favorite-line heart', (tester) async {
+  testWidgets('line list shows favorite-line star', (tester) async {
     const line = BusLine(
       routeId: 'R1',
       shortName: '5',
@@ -114,6 +114,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('Favorite line'), findsOneWidget);
-    expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+    expect(find.byIcon(Icons.star_border_rounded), findsOneWidget);
   });
 }

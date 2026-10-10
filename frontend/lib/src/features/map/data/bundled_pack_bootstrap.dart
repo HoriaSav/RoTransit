@@ -1,53 +1,31 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/branding/operator_branding.dart';
-import '../../routes/data/offline_transit_cache_repository.dart';
-import '../../saved/state/saved_providers.dart';
+import '../../../local/local_db.dart';
 import '../../shell/state/navigation_provider.dart';
 import 'companion_catalog.dart';
 
-void _syncBrasovCityContext(ProviderContainer container) {
+/// Sets Brașov as the city context and opens the bundled pack (on first launch
+/// or after an app update this extracts the asset, off the UI isolate).
+///
+/// Brașov screens read [CompanionCatalog] directly, so nothing is mirrored
+/// into the local offline tables. `rotransit.db` is still opened here so its
+/// migrations run on upgrade, and stale offline rows are cleared.
+Future<void> ensureBundledBrasovPackWithContainer(
+    ProviderContainer container) async {
   container.read(searchMapStateProvider.notifier).setCityContext(
         cityId: kBrasovCityId,
         cityName: kBrasovCityName,
       );
-}
-
-void _syncBrasovCityContextRef(WidgetRef ref) {
-  ref.read(searchMapStateProvider.notifier).setCityContext(
-        cityId: kBrasovCityId,
-        cityName: kBrasovCityName,
-      );
-}
-
-/// Seeds the bundled Brașov pack into local offline meta on first launch.
-Future<void> ensureBundledBrasovPack(WidgetRef ref) async {
-  final cache = ref.read(offlineTransitCacheRepositoryProvider);
-  final catalog = ref.read(companionCatalogProvider);
-  final meta = await catalog.meta();
-  final existing = await cache.getMetaForCity(meta.cityId);
-  if (existing == null ||
-      existing.packVersion.isEmpty ||
-      existing.packVersion != meta.packVersion) {
-    await catalog.mirrorMetaIntoLocalOfflineCache(cache.applyOfflinePackJson);
-    ref.read(offlinePackRevisionProvider.notifier).state++;
+  try {
+    await container.read(companionCatalogProvider).meta();
+  } finally {
+    // Independent of the pack: a pack failure must not skip the migration.
+    try {
+      await LocalDb.openAndClearStaleOfflineData();
+    } catch (e) {
+      debugPrint('rotransit.db migration failed: $e');
+    }
   }
-  // City context sync belongs outside FutureProvider build (see saved_providers).
-  _syncBrasovCityContextRef(ref);
-}
-
-/// Non-WidgetRef variant for [main] / ProviderContainer.
-Future<void> ensureBundledBrasovPackWithContainer(
-    ProviderContainer container) async {
-  final cache = container.read(offlineTransitCacheRepositoryProvider);
-  final catalog = container.read(companionCatalogProvider);
-  final meta = await catalog.meta();
-  final existing = await cache.getMetaForCity(meta.cityId);
-  if (existing == null ||
-      existing.packVersion.isEmpty ||
-      existing.packVersion != meta.packVersion) {
-    await catalog.mirrorMetaIntoLocalOfflineCache(cache.applyOfflinePackJson);
-    container.read(offlinePackRevisionProvider.notifier).state++;
-  }
-  _syncBrasovCityContext(container);
 }

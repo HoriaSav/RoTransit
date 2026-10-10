@@ -1,27 +1,15 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:rotransit_frontend/l10n/app_localizations.dart';
+import 'package:rotransit/l10n/app_localizations.dart';
 
 import 'app_user_message_l10n.dart';
 
 enum UserMessageSeverity { info, success, warning, error }
 
 enum AppUserMessageId {
-  completeSearchFields,
-  selectStationsFromPicker,
-  cityContextUnavailable,
-  searchRequiresInternet,
-  noRoutesFound,
   serverUnreachable,
   serverTimeout,
-  routingUnavailable,
-  invalidSearchParams,
-  cityNotFound,
   unexpectedError,
-  routeShapeSimplified,
-  loadMoreRoutesFailed,
-  addedToFavorites,
-  mapPickHint,
 }
 
 /// A message that may be shown in a SnackBar. [visible] false = never toast.
@@ -63,31 +51,6 @@ class AppUserMessage {
     );
   }
 
-  static const completeSearchFields = AppUserMessage(
-    id: AppUserMessageId.completeSearchFields,
-    severity: UserMessageSeverity.warning,
-  );
-
-  static const selectStationsFromPicker = AppUserMessage(
-    id: AppUserMessageId.selectStationsFromPicker,
-    severity: UserMessageSeverity.warning,
-  );
-
-  static const cityContextUnavailable = AppUserMessage(
-    id: AppUserMessageId.cityContextUnavailable,
-    severity: UserMessageSeverity.error,
-  );
-
-  static const searchRequiresInternet = AppUserMessage(
-    id: AppUserMessageId.searchRequiresInternet,
-    severity: UserMessageSeverity.warning,
-  );
-
-  static const noRoutesFound = AppUserMessage(
-    id: AppUserMessageId.noRoutesFound,
-    severity: UserMessageSeverity.info,
-  );
-
   static const serverUnreachable = AppUserMessage(
     id: AppUserMessageId.serverUnreachable,
     severity: UserMessageSeverity.error,
@@ -98,58 +61,16 @@ class AppUserMessage {
     severity: UserMessageSeverity.error,
   );
 
-  static const routingUnavailable = AppUserMessage(
-    id: AppUserMessageId.routingUnavailable,
-    severity: UserMessageSeverity.error,
-  );
-
-  static const invalidSearchParams = AppUserMessage(
-    id: AppUserMessageId.invalidSearchParams,
-    severity: UserMessageSeverity.warning,
-  );
-
-  static const cityNotFound = AppUserMessage(
-    id: AppUserMessageId.cityNotFound,
-    severity: UserMessageSeverity.error,
-  );
-
   static const unexpectedError = AppUserMessage(
     id: AppUserMessageId.unexpectedError,
     severity: UserMessageSeverity.error,
   );
-
-  static const routeShapeSimplified = AppUserMessage(
-    id: AppUserMessageId.routeShapeSimplified,
-    severity: UserMessageSeverity.warning,
-  );
-
-  static const loadMoreRoutesFailed = AppUserMessage(
-    id: AppUserMessageId.loadMoreRoutesFailed,
-    severity: UserMessageSeverity.error,
-  );
-
-  static const addedToFavorites = AppUserMessage(
-    id: AppUserMessageId.addedToFavorites,
-    severity: UserMessageSeverity.success,
-  );
-
-  static AppUserMessage mapCoordinateTap(String coordinates) => AppUserMessage(
-        text: '',
-        visible: false,
-        debugDetail: 'Map tap ignored: $coordinates',
-      );
 
   static AppUserMessage mapLocationPicked(String target) => AppUserMessage(
         text: '',
         visible: false,
         debugDetail: 'Map location picked for $target',
       );
-
-  static const mapPickHint = AppUserMessage(
-    id: AppUserMessageId.mapPickHint,
-    visible: false,
-    debugDetail: 'Map pick mode started',
-  );
 
   String resolveText([AppLocalizations? l10n]) {
     final trimmed = text?.trim();
@@ -194,14 +115,12 @@ class UserMessageResolver {
       );
     }
 
-    return switch (status) {
-      400 => AppUserMessages.invalidSearchParams,
-      404 => AppUserMessages.cityNotFound,
-      502 => AppUserMessages.routingUnavailable,
-      503 => AppUserMessages.routingUnavailable,
-      null => AppUserMessages.serverUnreachable,
-      _ => AppUserMessages.serverUnreachable,
-    };
+    // The only API call left is the city list, so keep the copy generic:
+    // a 4xx is our bug, anything else means the server is not usable.
+    if (status != null && status >= 400 && status < 500) {
+      return AppUserMessages.unexpectedError;
+    }
+    return AppUserMessages.serverUnreachable;
   }
 
   static String? _backendErrorCode(DioException error) {
@@ -222,32 +141,12 @@ String userFacingMessageForDioFailure(Object error) {
 
 String _englishFallback(AppUserMessageId? id) {
   return switch (id) {
-    AppUserMessageId.completeSearchFields =>
-      'Please fill in From, To, date, and time.',
-    AppUserMessageId.selectStationsFromPicker =>
-      'Select both stations from the list or map.',
-    AppUserMessageId.cityContextUnavailable =>
-      'Could not load your city. Try again later.',
-    AppUserMessageId.searchRequiresInternet =>
-      'Route search needs an internet connection.',
-    AppUserMessageId.noRoutesFound => 'No routes found for this trip.',
     AppUserMessageId.serverUnreachable =>
       'Cannot reach the server. Check your connection and try again.',
     AppUserMessageId.serverTimeout =>
       'The server took too long to respond. Try again.',
-    AppUserMessageId.routingUnavailable =>
-      'Trip planning is temporarily unavailable.',
-    AppUserMessageId.invalidSearchParams =>
-      'Check your stations, date, and time.',
-    AppUserMessageId.cityNotFound => 'This city is not available yet.',
     AppUserMessageId.unexpectedError =>
       'Something went wrong. Please try again.',
-    AppUserMessageId.routeShapeSimplified =>
-      'Could not load full route details. Showing a simplified view.',
-    AppUserMessageId.loadMoreRoutesFailed =>
-      'Could not load more routes. Try again.',
-    AppUserMessageId.addedToFavorites => 'Added to favorites',
-    AppUserMessageId.mapPickHint => '',
     null => '',
   };
 }

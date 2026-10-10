@@ -11,16 +11,20 @@ void main() {
     expect(src.contains('Favorite line'), isFalse);
     expect(src.contains('Icons.favorite_border'), isFalse);
     // Stop favorite (star) remains.
-    expect(src.contains('Favorite stop'), isTrue);
+    expect(src.contains('l10n.favoriteStopAdd'), isTrue);
     expect(src.contains('_toggleFavorite'), isTrue);
   });
 
   test('favorites empty copy points at Timetable, not stop board', () {
-    final src = File(
-      'lib/src/features/saved/presentation/favorites_tab.dart',
-    ).readAsStringSync();
-    expect(src.contains('Favorite a line from a stop board row.'), isFalse);
-    expect(src.contains('Favorite a line from the Timetable tab.'), isTrue);
+    final arb = File('lib/l10n/app_en.arb').readAsStringSync();
+    expect(
+      arb.contains(
+        '"favoritesLinesEmpty": "No favorite lines yet. In Timetable,',
+      ),
+      isTrue,
+    );
+    // Saved journeys are gone; no copy may invite users to save one.
+    expect(arb.contains('favoritesEmpty'), isFalse);
   });
 
   test('map gesture thresholds are mid-race (snappy zoom, intentional rotate)',

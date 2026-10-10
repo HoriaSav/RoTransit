@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:rotransit_frontend/src/core/format/search_text_normalizer.dart';
+import 'package:rotransit/src/core/format/search_text_normalizer.dart';
 
 void main() {
   test('normalizes Romanian diacritics to base letters', () {

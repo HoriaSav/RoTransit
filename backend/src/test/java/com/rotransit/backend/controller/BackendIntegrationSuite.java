@@ -7,7 +7,6 @@ import org.junit.platform.suite.api.Suite;
 @SelectClasses({
         CityControllerIntegrationTest.class,
         RouteControllerIntegrationTest.class,
-        SavedRouteControllerIntegrationTest.class,
         TransitCatalogControllerIntegrationTest.class,
         HealthControllerIntegrationTest.class
 })

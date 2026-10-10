@@ -1,5 +1,3 @@
-// ignore: unused_import
-import 'package:intl/intl.dart' as intl;
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -12,25 +10,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appTitle => 'RoTransit';
 
   @override
-  String get navSearch => 'Search';
+  String get navMap => 'Map';
 
   @override
-  String get navBus => 'Bus';
+  String get navBus => 'Timetable';
 
   @override
   String get navFavorites => 'Favorites';
-
-  @override
-  String get navSettings => 'Settings';
 
   @override
   String get settingsTitle => 'Settings';
 
   @override
   String get city => 'City';
-
-  @override
-  String get notifications => 'Notifications';
 
   @override
   String get darkMode => 'Dark mode';
@@ -54,112 +46,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get languageGerman => 'German';
 
   @override
-  String get offlineTimetables => 'Offline timetables';
+  String get settingsDataAsOf => 'Brașov data as of';
 
   @override
-  String get offlinePackWhatItCovers =>
-      'Stores bus lines and stop timetables on the phone. Searching a trip from A to B still needs internet.';
+  String get settingsFaresTitle => 'Fares & tickets';
 
   @override
-  String offlineOnDevicePack(String version) {
-    return 'On-device pack: $version';
-  }
+  String get settingsFaresSubtitle => 'Urban vs metropolitan · where to buy';
 
   @override
-  String offlineServerMeta(String meta) {
-    return 'Server meta (for updates): $meta';
-  }
+  String get faresSheetTitle => 'RATBV fares (static guide)';
 
   @override
-  String get offlineUpdatingBackground => 'Downloading timetables…';
+  String get faresSheetBody =>
+      'Urban (inside Brașov): about 5 RON per ride on the standard ticket (confirm on ratbv.ro — prices change).\n\nMetropolitan / zone tickets: higher fares for trips into nearby communes (roughly 7–12 RON depending on zone in the GTFS fare table).\n\nBuy tickets: 24pay app, RATBV ticket machines/kiosks, and other channels listed on the operator site. This app does not sell tickets.';
 
   @override
-  String offlineDownloadProgressPercent(int percent) {
-    return 'Downloading… $percent%';
-  }
-
-  @override
-  String offlineDownloadEtaMinutes(int count) {
-    return '~$count min left';
-  }
-
-  @override
-  String offlineDownloadEtaSeconds(int count) {
-    return '~$count sec left';
-  }
-
-  @override
-  String offlineDownloadReceived(String size) {
-    return 'Downloaded $size…';
-  }
-
-  @override
-  String get offlineDownloadSaving => 'Saving timetables on device…';
-
-  @override
-  String offlineDownloadReceivedWithElapsed(String size, int seconds) {
-    return 'Downloaded $size · $seconds sec';
-  }
-
-  @override
-  String get offlinePackChooseCityFirst => 'Choose a city first';
-
-  @override
-  String get offlinePackNoneYet => 'Not downloaded';
-
-  @override
-  String get offlinePackAvailableOnDevice => 'Available on device';
-
-  @override
-  String offlinePackDownloaded(String date) {
-    return 'Downloaded $date';
-  }
-
-  @override
-  String offlinePackDownloadedWithWeek(String date, String week) {
-    return 'Downloaded $date · week $week';
-  }
-
-  @override
-  String get offlineMetaEndpointMissing =>
-      'Not available — deploy GET /api/buses/offline-pack-meta on the server';
-
-  @override
-  String get timetableDownloadSourceBus => 'Bus timetables';
-
-  @override
-  String get timetableDownloadConfirmTitle => 'Download timetables?';
-
-  @override
-  String timetableDownloadConfirmMessage(String cityName) {
-    return 'Download bus lines and stop timetables for $cityName onto this phone? Searching a trip from A to B still needs internet. This may use mobile data.';
-  }
-
-  @override
-  String get timetableDownloadAction => 'Download';
-
-  @override
-  String timetableDownloadSuccess(String cityName) {
-    return 'Timetables downloaded for $cityName';
-  }
-
-  @override
-  String get timetableDownloadFailed => 'Could not download timetables';
-
-  @override
-  String get timetableDownloadOffline =>
-      'Connect to the internet to download timetables';
-
-  @override
-  String get timetableDownloadAlreadyUpToDate =>
-      'Timetables are already downloaded and up to date';
-
-  @override
-  String get busTabTimetablesNotDownloadedTitle => 'Timetables not downloaded';
+  String get busTabTimetablesNotDownloadedTitle => 'Timetables not available';
 
   @override
   String get busTabTimetablesNotDownloadedBody =>
-      'Download bus timetables for this city in Settings to browse lines and schedules.';
+      'Timetables are available only for Brașov for now. Choose Brașov in Settings.';
 
   @override
   String get busTabOpenSettings => 'Go to Settings';
@@ -175,9 +82,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get busNoLinesFound => 'No bus lines found.';
-
-  @override
-  String get busSearchLineHint => 'Search line number or name';
 
   @override
   String get busCouldNotLoadLines => 'Could not load bus lines';
@@ -217,14 +121,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String busFrom(String destination) {
-    return 'From: $destination';
-  }
-
-  @override
-  String busLineTitle(String short, String long) {
-    return 'Bus $short · $long';
-  }
+  String get favoriteLineAdd => 'Favorite line';
 
   @override
   String get timetableHour => 'Hour';
@@ -240,18 +137,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get version => 'Version';
-
-  @override
-  String get privacyPolicy => 'Privacy policy';
-
-  @override
-  String get termsOfUse => 'Terms of use';
-
-  @override
-  String get help => 'Help';
-
-  @override
-  String get contactUs => 'Contact us';
 
   @override
   String countryLabel(String country) {
@@ -270,35 +155,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get pressBackAgainToExit => 'Press back again quickly to exit the app';
 
   @override
-  String get commonCancel => 'Cancel';
-
-  @override
-  String get commonDelete => 'Delete';
-
-  @override
-  String get commonBack => 'Back';
-
-  @override
   String get openSettings => 'Settings';
 
   @override
-  String get errorCompleteSearchFields =>
-      'Please fill in From, To, date, and time.';
-
-  @override
-  String get errorSelectStationsFromPicker =>
-      'Select both stations from the list or map.';
-
-  @override
-  String get errorCityContextUnavailable =>
-      'Could not load your city. Try again later.';
-
-  @override
-  String get errorSearchRequiresInternet =>
-      'Route search needs an internet connection.';
-
-  @override
-  String get errorNoRoutesFound => 'No routes found for this trip.';
+  String get linkOpenFailed => 'Could not open the link';
 
   @override
   String get errorServerUnreachable =>
@@ -309,28 +169,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'The server took too long to respond. Try again.';
 
   @override
-  String get errorRoutingUnavailable =>
-      'Trip planning is temporarily unavailable.';
-
-  @override
-  String get errorInvalidSearchParams => 'Check your stations, date, and time.';
-
-  @override
-  String get errorCityNotFound => 'This city is not available yet.';
-
-  @override
   String get errorUnexpectedError => 'Something went wrong. Please try again.';
-
-  @override
-  String get errorRouteShapeSimplified =>
-      'Could not load full route details. Showing a simplified view.';
-
-  @override
-  String get errorLoadMoreRoutesFailed =>
-      'Could not load more routes. Try again.';
-
-  @override
-  String get successAddedToFavorites => 'Added to favorites';
 
   @override
   String get locationServicesOff =>
@@ -352,197 +191,79 @@ class AppLocalizationsEn extends AppLocalizations {
       'Could not get a reliable GPS fix. Try outdoors, enable precise location, or use Select on map.';
 
   @override
-  String get searchFrom => 'From';
-
-  @override
-  String get searchTo => 'To';
-
-  @override
-  String get searchDate => 'Date';
-
-  @override
-  String get searchTime => 'Time';
-
-  @override
-  String get searchButton => 'Search';
-
-  @override
-  String get searchRecent => 'Recent';
-
-  @override
-  String get searchNoRecent => 'No recent searches yet.';
-
-  @override
-  String get searchCouldNotLoadRecent => 'Could not load recent searches.';
-
-  @override
-  String get searchSelectDate => 'Select date';
-
-  @override
-  String get searchSelectTime => 'Select time';
-
-  @override
-  String get searchSwapTooltip => 'Swap From and To';
-
-  @override
-  String get searchDeparture => 'Departure';
-
-  @override
-  String get searchDestination => 'Destination';
-
-  @override
   String get searchSelectStop => 'Select stop';
 
   @override
-  String get searchStationHint => 'Search station';
+  String get favoritesCouldNotLoad => 'Could not load favorites';
 
   @override
-  String get searchCurrentLocation => 'Current location';
+  String get favoritesCouldNotSave => 'Could not save favorite';
 
   @override
-  String get searchSelectOnMap => 'Select on map';
+  String get favoritesStopsTitle => 'Stops';
 
   @override
-  String get searchNoNearbyStops =>
-      'No nearby stops. Search above or use Select on map.';
+  String get favoritesStopsEmpty =>
+      'No favorite stops yet. Open a stop on the map and tap the star.';
 
   @override
-  String get searchNoMatches =>
-      'No matches for your search. Try another query or Select on map.';
+  String get favoritesLinesTitle => 'Lines';
 
   @override
-  String get searchEnableLocationForDistance => 'Enable location for distance';
+  String get favoritesLinesEmpty =>
+      'No favorite lines yet. In Timetable, tap the star next to a line.';
 
   @override
-  String get searchWaitingForGps => 'Waiting for GPS...';
+  String get favoriteStopAdd => 'Favorite stop';
 
   @override
-  String get searchUsingGps => 'Using your GPS position';
-
-  @override
-  String get searchTapToRetryLocation =>
-      'Tap to retry — enable precise location';
-
-  @override
-  String get searchGettingLocation => 'Getting your location...';
-
-  @override
-  String get origin => 'Origin';
-
-  @override
-  String get destination => 'Destination';
-
-  @override
-  String get favoritesSavedJourneys => 'Saved journeys';
-
-  @override
-  String get favoritesEmptyTitle => 'No saved journeys yet';
-
-  @override
-  String get favoritesEmptyBody =>
-      'Search for a route, open its details, and tap Add to favorites.';
-
-  @override
-  String get favoritesDeleteTitle => 'Delete trip?';
-
-  @override
-  String get favoritesDeleteBody => 'Remove this journey from your favorites?';
-
-  @override
-  String get favoritesCouldNotLoad => 'Could not load saved journeys';
-
-  @override
-  String get favoritesDirect => 'Direct';
-
-  @override
-  String favoritesTransfers(int count) {
-    return '$count transfers';
-  }
-
-  @override
-  String get favoritesOneTransfer => '1 transfer';
-
-  @override
-  String get savedJourneyLabel => 'Saved journey';
-
-  @override
-  String get mapWalkingRoute => 'Walking route';
+  String get favoriteRemove => 'Remove favorite';
 
   @override
   String get mapRotateNorth => 'Rotate map to north';
 
   @override
-  String get mapSearchRoutesHint => 'Search routes to see options here.';
+  String get mapSearchStationsHint => 'Search Brașov stations';
 
   @override
-  String get mapLoading => 'Loading…';
+  String get mapScheduleNotLive => 'Schedule times · not live GPS';
 
   @override
-  String mapLoadMoreTripsWithRemaining(int count, int remaining) {
-    return 'Load $count more trips ($remaining left)';
+  String stopBoardWindow(int minutes) {
+    return 'Next $minutes min';
   }
 
   @override
-  String mapLoadMoreTrips(int count, String tripWord) {
-    return 'Load $count more $tripWord';
+  String get stopBoardCouldNotLoad => 'Could not load schedule';
+
+  @override
+  String stopBoardEmpty(int minutes) {
+    return 'No departures in the next $minutes minutes';
   }
 
   @override
-  String mapLoadNextTrips(int count) {
-    return 'Load next $count trips';
+  String stopBoardShowMore(int minutes) {
+    return 'Show next $minutes minutes';
   }
 
   @override
-  String get mapTripSingular => 'trip';
-
-  @override
-  String get mapTripPlural => 'trips';
-
-  @override
-  String get mapNoTransfers => 'No transfers';
-
-  @override
-  String mapTransfers(int count) {
-    return '$count transfers';
+  String stopBoardUntil(String time) {
+    return 'Until $time';
   }
 
   @override
-  String get mapOneTransfer => '1 transfer';
-
-  @override
-  String get mapAddToFavorites => 'Add to favorites';
-
-  @override
-  String get mapSteps => 'Steps';
-
-  @override
-  String mapPriceLei(int price) {
-    return '$price lei';
+  String stopBoardEmptyUntil(String time) {
+    return 'No departures until $time';
   }
 
   @override
-  String mapTransfersAndPrice(String transfers, String price) {
-    return '$transfers • $price';
+  String stopBoardFeedEnded(String date) {
+    return 'Timetable data ended on $date. Update the app to see departures.';
   }
 
   @override
-  String get transitBus => 'Bus';
+  String get stopOpenInGoogleMaps => 'Open in Google Maps';
 
   @override
-  String get transitTrolleybus => 'Trolleybus';
-
-  @override
-  String get transitTram => 'Tram';
-
-  @override
-  String get transitTrain => 'Train';
-
-  @override
-  String get transitMetro => 'Metro';
-
-  @override
-  String get transitWalk => 'Walk';
-
-  @override
-  String get transitGeneric => 'Transit';
+  String get busSearchLineHint => 'Search line number or name';
 }

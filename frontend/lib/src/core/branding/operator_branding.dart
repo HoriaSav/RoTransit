@@ -8,8 +8,21 @@ import '../theme/app_extra_colors.dart';
 /// Stable Brasov city id from [db/postgres/init/001_init.sql].
 const kBrasovCityId = '93715d42-5523-4195-8743-53b6819488c9';
 
-/// Bucharest seed id — listed in API but not selectable yet.
-const kBucharestCityId = 'a1b2c3d4-e5f6-4789-a012-3456789abcde';
+/// Display name matching the Postgres seed (no diacritics in the DB row).
+const kBrasovCityName = 'Brasov';
+
+/// Old local-preview UUID. Treat as unresolved so Search/Settings never
+/// call the API with a city that does not exist.
+const kLegacyPlaceholderCityId = '00000000-0000-0000-0000-000000000001';
+
+bool isUnresolvedCityId(String? cityId) {
+  final id = cityId?.trim() ?? '';
+  return id.isEmpty || id == kLegacyPlaceholderCityId;
+}
+
+/// Brașov when [cityId] is missing or the retired preview UUID.
+String resolvedCityId(String? cityId) =>
+    isUnresolvedCityId(cityId) ? kBrasovCityId : cityId!.trim();
 
 const kRatbvLogoAsset = 'assets/operators/ratBv_noBg.png';
 
@@ -17,9 +30,8 @@ const kRatbvLogoAsset = 'assets/operators/ratBv_noBg.png';
 const kRatbvLogoOnLightAsset = 'assets/operators/ratBv.png';
 
 bool isCityAvailable({required String cityId, required String cityName}) {
-  if (cityId == kBucharestCityId) return false;
-  if (cityName.trim().toLowerCase() == 'bucharest') return false;
-  return true;
+  final name = cityName.trim().toLowerCase();
+  return cityId == kBrasovCityId || name == 'brasov';
 }
 
 /// Bundled operator logo for [cityId] / [cityName], or null for generic fallback.

@@ -126,16 +126,12 @@ class _SettingsNavRow extends StatelessWidget {
     required this.icon,
     required this.title,
     this.subtitle,
-    this.subtitleWidget,
-    this.trailing,
     this.onTap,
   });
 
   final IconData icon;
   final String title;
   final String? subtitle;
-  final Widget? subtitleWidget;
-  final Widget? trailing;
   final VoidCallback? onTap;
 
   @override
@@ -168,10 +164,7 @@ class _SettingsNavRow extends StatelessWidget {
                             : scheme.onSurface.withValues(alpha: 0.55),
                       ),
                     ),
-                    if (subtitleWidget != null) ...[
-                      const SizedBox(height: 6),
-                      subtitleWidget!,
-                    ] else if (subtitle != null && subtitle!.isNotEmpty) ...[
+                    if (subtitle != null && subtitle!.isNotEmpty) ...[
                       const SizedBox(height: 3),
                       Text(
                         subtitle!,
@@ -186,14 +179,13 @@ class _SettingsNavRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              trailing ??
-                  Icon(
-                    Icons.chevron_right_rounded,
-                    size: 22,
-                    color: enabled
-                        ? mutedChromeColor(context)
-                        : scheme.onSurfaceVariant.withValues(alpha: 0.35),
-                  ),
+              Icon(
+                Icons.chevron_right_rounded,
+                size: 22,
+                color: enabled
+                    ? mutedChromeColor(context)
+                    : scheme.onSurfaceVariant.withValues(alpha: 0.35),
+              ),
             ],
           ),
         ),
@@ -282,7 +274,7 @@ class _SettingsInfoRow extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       child: Row(
         children: [
-          _SettingsIconBadge(icon: Icons.info_outline_rounded),
+          const _SettingsIconBadge(icon: Icons.info_outline_rounded),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
@@ -313,54 +305,6 @@ class _SettingsInfoRow extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _OfflineDownloadProgressSubtitle extends StatelessWidget {
-  const _OfflineDownloadProgressSubtitle({
-    required this.progress,
-    required this.statusText,
-    this.coverageHint,
-  });
-
-  final OfflinePackDownloadProgress progress;
-  final String statusText;
-  final String? coverageHint;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          statusText,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurface,
-                fontWeight: FontWeight.w500,
-              ),
-        ),
-        const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            minHeight: 5,
-            value: progress.fraction,
-          ),
-        ),
-        if (coverageHint != null && coverageHint!.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Text(
-            coverageHint!,
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.35,
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ],
     );
   }
 }

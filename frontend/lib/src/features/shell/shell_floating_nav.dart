@@ -42,7 +42,7 @@ class ShellFloatingNavBar extends StatelessWidget {
               selected: selectedIndex == 0,
               icon: Icons.map_outlined,
               selectedIcon: Icons.map_rounded,
-              label: l10n.navSearch,
+              label: l10n.navMap,
               onTap: () => onDestinationSelected(0),
             ),
             _Slot(
@@ -54,8 +54,8 @@ class ShellFloatingNavBar extends StatelessWidget {
             ),
             _Slot(
               selected: selectedIndex == 2,
-              icon: Icons.favorite_border_rounded,
-              selectedIcon: Icons.favorite_rounded,
+              icon: Icons.star_border_rounded,
+              selectedIcon: Icons.star_rounded,
               label: l10n.navFavorites,
               onTap: () => onDestinationSelected(2),
             ),

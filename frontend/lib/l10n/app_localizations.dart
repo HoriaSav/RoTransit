@@ -106,16 +106,16 @@ abstract class AppLocalizations {
   /// **'RoTransit'**
   String get appTitle;
 
-  /// No description provided for @navSearch.
+  /// No description provided for @navMap.
   ///
   /// In en, this message translates to:
-  /// **'Search'**
-  String get navSearch;
+  /// **'Map'**
+  String get navMap;
 
   /// No description provided for @navBus.
   ///
   /// In en, this message translates to:
-  /// **'Bus'**
+  /// **'Timetable'**
   String get navBus;
 
   /// No description provided for @navFavorites.
@@ -123,12 +123,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Favorites'**
   String get navFavorites;
-
-  /// No description provided for @navSettings.
-  ///
-  /// In en, this message translates to:
-  /// **'Settings'**
-  String get navSettings;
 
   /// No description provided for @settingsTitle.
   ///
@@ -141,12 +135,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'City'**
   String get city;
-
-  /// No description provided for @notifications.
-  ///
-  /// In en, this message translates to:
-  /// **'Notifications'**
-  String get notifications;
 
   /// No description provided for @darkMode.
   ///
@@ -190,166 +178,46 @@ abstract class AppLocalizations {
   /// **'German'**
   String get languageGerman;
 
-  /// No description provided for @offlineTimetables.
+  /// No description provided for @settingsDataAsOf.
   ///
   /// In en, this message translates to:
-  /// **'Offline timetables'**
-  String get offlineTimetables;
+  /// **'Brașov data as of'**
+  String get settingsDataAsOf;
 
-  /// No description provided for @offlinePackWhatItCovers.
+  /// No description provided for @settingsFaresTitle.
   ///
   /// In en, this message translates to:
-  /// **'Stores bus lines and stop timetables on the phone. Searching a trip from A to B still needs internet.'**
-  String get offlinePackWhatItCovers;
+  /// **'Fares & tickets'**
+  String get settingsFaresTitle;
 
-  /// No description provided for @offlineOnDevicePack.
+  /// No description provided for @settingsFaresSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'On-device pack: {version}'**
-  String offlineOnDevicePack(String version);
+  /// **'Urban vs metropolitan · where to buy'**
+  String get settingsFaresSubtitle;
 
-  /// No description provided for @offlineServerMeta.
+  /// No description provided for @faresSheetTitle.
   ///
   /// In en, this message translates to:
-  /// **'Server meta (for updates): {meta}'**
-  String offlineServerMeta(String meta);
+  /// **'RATBV fares (static guide)'**
+  String get faresSheetTitle;
 
-  /// No description provided for @offlineUpdatingBackground.
+  /// No description provided for @faresSheetBody.
   ///
   /// In en, this message translates to:
-  /// **'Downloading timetables…'**
-  String get offlineUpdatingBackground;
-
-  /// No description provided for @offlineDownloadProgressPercent.
-  ///
-  /// In en, this message translates to:
-  /// **'Downloading… {percent}%'**
-  String offlineDownloadProgressPercent(int percent);
-
-  /// No description provided for @offlineDownloadEtaMinutes.
-  ///
-  /// In en, this message translates to:
-  /// **'~{count} min left'**
-  String offlineDownloadEtaMinutes(int count);
-
-  /// No description provided for @offlineDownloadEtaSeconds.
-  ///
-  /// In en, this message translates to:
-  /// **'~{count} sec left'**
-  String offlineDownloadEtaSeconds(int count);
-
-  /// No description provided for @offlineDownloadReceived.
-  ///
-  /// In en, this message translates to:
-  /// **'Downloaded {size}…'**
-  String offlineDownloadReceived(String size);
-
-  /// No description provided for @offlineDownloadSaving.
-  ///
-  /// In en, this message translates to:
-  /// **'Saving timetables on device…'**
-  String get offlineDownloadSaving;
-
-  /// No description provided for @offlineDownloadReceivedWithElapsed.
-  ///
-  /// In en, this message translates to:
-  /// **'Downloaded {size} · {seconds} sec'**
-  String offlineDownloadReceivedWithElapsed(String size, int seconds);
-
-  /// No description provided for @offlinePackChooseCityFirst.
-  ///
-  /// In en, this message translates to:
-  /// **'Choose a city first'**
-  String get offlinePackChooseCityFirst;
-
-  /// No description provided for @offlinePackNoneYet.
-  ///
-  /// In en, this message translates to:
-  /// **'Not downloaded'**
-  String get offlinePackNoneYet;
-
-  /// No description provided for @offlinePackAvailableOnDevice.
-  ///
-  /// In en, this message translates to:
-  /// **'Available on device'**
-  String get offlinePackAvailableOnDevice;
-
-  /// No description provided for @offlinePackDownloaded.
-  ///
-  /// In en, this message translates to:
-  /// **'Downloaded {date}'**
-  String offlinePackDownloaded(String date);
-
-  /// No description provided for @offlinePackDownloadedWithWeek.
-  ///
-  /// In en, this message translates to:
-  /// **'Downloaded {date} · week {week}'**
-  String offlinePackDownloadedWithWeek(String date, String week);
-
-  /// No description provided for @offlineMetaEndpointMissing.
-  ///
-  /// In en, this message translates to:
-  /// **'Not available — deploy GET /api/buses/offline-pack-meta on the server'**
-  String get offlineMetaEndpointMissing;
-
-  /// No description provided for @timetableDownloadSourceBus.
-  ///
-  /// In en, this message translates to:
-  /// **'Bus timetables'**
-  String get timetableDownloadSourceBus;
-
-  /// No description provided for @timetableDownloadConfirmTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Download timetables?'**
-  String get timetableDownloadConfirmTitle;
-
-  /// No description provided for @timetableDownloadConfirmMessage.
-  ///
-  /// In en, this message translates to:
-  /// **'Download bus lines and stop timetables for {cityName} onto this phone? Searching a trip from A to B still needs internet. This may use mobile data.'**
-  String timetableDownloadConfirmMessage(String cityName);
-
-  /// No description provided for @timetableDownloadAction.
-  ///
-  /// In en, this message translates to:
-  /// **'Download'**
-  String get timetableDownloadAction;
-
-  /// No description provided for @timetableDownloadSuccess.
-  ///
-  /// In en, this message translates to:
-  /// **'Timetables downloaded for {cityName}'**
-  String timetableDownloadSuccess(String cityName);
-
-  /// No description provided for @timetableDownloadFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'Could not download timetables'**
-  String get timetableDownloadFailed;
-
-  /// No description provided for @timetableDownloadOffline.
-  ///
-  /// In en, this message translates to:
-  /// **'Connect to the internet to download timetables'**
-  String get timetableDownloadOffline;
-
-  /// No description provided for @timetableDownloadAlreadyUpToDate.
-  ///
-  /// In en, this message translates to:
-  /// **'Timetables are already downloaded and up to date'**
-  String get timetableDownloadAlreadyUpToDate;
+  /// **'Urban (inside Brașov): about 5 RON per ride on the standard ticket (confirm on ratbv.ro — prices change).\n\nMetropolitan / zone tickets: higher fares for trips into nearby communes (roughly 7–12 RON depending on zone in the GTFS fare table).\n\nBuy tickets: 24pay app, RATBV ticket machines/kiosks, and other channels listed on the operator site. This app does not sell tickets.'**
+  String get faresSheetBody;
 
   /// No description provided for @busTabTimetablesNotDownloadedTitle.
   ///
   /// In en, this message translates to:
-  /// **'Timetables not downloaded'**
+  /// **'Timetables not available'**
   String get busTabTimetablesNotDownloadedTitle;
 
   /// No description provided for @busTabTimetablesNotDownloadedBody.
   ///
   /// In en, this message translates to:
-  /// **'Download bus timetables for this city in Settings to browse lines and schedules.'**
+  /// **'Timetables are available only for Brașov for now. Choose Brașov in Settings.'**
   String get busTabTimetablesNotDownloadedBody;
 
   /// No description provided for @busTabOpenSettings.
@@ -381,13 +249,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No bus lines found.'**
   String get busNoLinesFound;
-
-  /// Hint for searching bus lines on the Timetable tab.
-  ///
-  /// In en, this message translates to:
-  /// **'Search line number or name'**
-  String get busSearchLineHint;
-
 
   /// No description provided for @busCouldNotLoadLines.
   ///
@@ -455,17 +316,11 @@ abstract class AppLocalizations {
   /// **'Towards: {destination}'**
   String busTowards(String destination);
 
-  /// No description provided for @busFrom.
+  /// No description provided for @favoriteLineAdd.
   ///
   /// In en, this message translates to:
-  /// **'From: {destination}'**
-  String busFrom(String destination);
-
-  /// No description provided for @busLineTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Bus {short} · {long}'**
-  String busLineTitle(String short, String long);
+  /// **'Favorite line'**
+  String get favoriteLineAdd;
 
   /// No description provided for @timetableHour.
   ///
@@ -497,30 +352,6 @@ abstract class AppLocalizations {
   /// **'Version'**
   String get version;
 
-  /// No description provided for @privacyPolicy.
-  ///
-  /// In en, this message translates to:
-  /// **'Privacy policy'**
-  String get privacyPolicy;
-
-  /// No description provided for @termsOfUse.
-  ///
-  /// In en, this message translates to:
-  /// **'Terms of use'**
-  String get termsOfUse;
-
-  /// No description provided for @help.
-  ///
-  /// In en, this message translates to:
-  /// **'Help'**
-  String get help;
-
-  /// No description provided for @contactUs.
-  ///
-  /// In en, this message translates to:
-  /// **'Contact us'**
-  String get contactUs;
-
   /// No description provided for @countryLabel.
   ///
   /// In en, this message translates to:
@@ -545,59 +376,17 @@ abstract class AppLocalizations {
   /// **'Press back again quickly to exit the app'**
   String get pressBackAgainToExit;
 
-  /// No description provided for @commonCancel.
-  ///
-  /// In en, this message translates to:
-  /// **'Cancel'**
-  String get commonCancel;
-
-  /// No description provided for @commonDelete.
-  ///
-  /// In en, this message translates to:
-  /// **'Delete'**
-  String get commonDelete;
-
-  /// No description provided for @commonBack.
-  ///
-  /// In en, this message translates to:
-  /// **'Back'**
-  String get commonBack;
-
   /// No description provided for @openSettings.
   ///
   /// In en, this message translates to:
   /// **'Settings'**
   String get openSettings;
 
-  /// No description provided for @errorCompleteSearchFields.
+  /// No description provided for @linkOpenFailed.
   ///
   /// In en, this message translates to:
-  /// **'Please fill in From, To, date, and time.'**
-  String get errorCompleteSearchFields;
-
-  /// No description provided for @errorSelectStationsFromPicker.
-  ///
-  /// In en, this message translates to:
-  /// **'Select both stations from the list or map.'**
-  String get errorSelectStationsFromPicker;
-
-  /// No description provided for @errorCityContextUnavailable.
-  ///
-  /// In en, this message translates to:
-  /// **'Could not load your city. Try again later.'**
-  String get errorCityContextUnavailable;
-
-  /// No description provided for @errorSearchRequiresInternet.
-  ///
-  /// In en, this message translates to:
-  /// **'Route search needs an internet connection.'**
-  String get errorSearchRequiresInternet;
-
-  /// No description provided for @errorNoRoutesFound.
-  ///
-  /// In en, this message translates to:
-  /// **'No routes found for this trip.'**
-  String get errorNoRoutesFound;
+  /// **'Could not open the link'**
+  String get linkOpenFailed;
 
   /// No description provided for @errorServerUnreachable.
   ///
@@ -611,47 +400,11 @@ abstract class AppLocalizations {
   /// **'The server took too long to respond. Try again.'**
   String get errorServerTimeout;
 
-  /// No description provided for @errorRoutingUnavailable.
-  ///
-  /// In en, this message translates to:
-  /// **'Trip planning is temporarily unavailable.'**
-  String get errorRoutingUnavailable;
-
-  /// No description provided for @errorInvalidSearchParams.
-  ///
-  /// In en, this message translates to:
-  /// **'Check your stations, date, and time.'**
-  String get errorInvalidSearchParams;
-
-  /// No description provided for @errorCityNotFound.
-  ///
-  /// In en, this message translates to:
-  /// **'This city is not available yet.'**
-  String get errorCityNotFound;
-
   /// No description provided for @errorUnexpectedError.
   ///
   /// In en, this message translates to:
   /// **'Something went wrong. Please try again.'**
   String get errorUnexpectedError;
-
-  /// No description provided for @errorRouteShapeSimplified.
-  ///
-  /// In en, this message translates to:
-  /// **'Could not load full route details. Showing a simplified view.'**
-  String get errorRouteShapeSimplified;
-
-  /// No description provided for @errorLoadMoreRoutesFailed.
-  ///
-  /// In en, this message translates to:
-  /// **'Could not load more routes. Try again.'**
-  String get errorLoadMoreRoutesFailed;
-
-  /// No description provided for @successAddedToFavorites.
-  ///
-  /// In en, this message translates to:
-  /// **'Added to favorites'**
-  String get successAddedToFavorites;
 
   /// No description provided for @locationServicesOff.
   ///
@@ -683,227 +436,59 @@ abstract class AppLocalizations {
   /// **'Could not get a reliable GPS fix. Try outdoors, enable precise location, or use Select on map.'**
   String get locationGpsFailed;
 
-  /// No description provided for @searchFrom.
-  ///
-  /// In en, this message translates to:
-  /// **'From'**
-  String get searchFrom;
-
-  /// No description provided for @searchTo.
-  ///
-  /// In en, this message translates to:
-  /// **'To'**
-  String get searchTo;
-
-  /// No description provided for @searchDate.
-  ///
-  /// In en, this message translates to:
-  /// **'Date'**
-  String get searchDate;
-
-  /// No description provided for @searchTime.
-  ///
-  /// In en, this message translates to:
-  /// **'Time'**
-  String get searchTime;
-
-  /// No description provided for @searchButton.
-  ///
-  /// In en, this message translates to:
-  /// **'Search'**
-  String get searchButton;
-
-  /// No description provided for @searchRecent.
-  ///
-  /// In en, this message translates to:
-  /// **'Recent'**
-  String get searchRecent;
-
-  /// No description provided for @searchNoRecent.
-  ///
-  /// In en, this message translates to:
-  /// **'No recent searches yet.'**
-  String get searchNoRecent;
-
-  /// No description provided for @searchCouldNotLoadRecent.
-  ///
-  /// In en, this message translates to:
-  /// **'Could not load recent searches.'**
-  String get searchCouldNotLoadRecent;
-
-  /// No description provided for @searchSelectDate.
-  ///
-  /// In en, this message translates to:
-  /// **'Select date'**
-  String get searchSelectDate;
-
-  /// No description provided for @searchSelectTime.
-  ///
-  /// In en, this message translates to:
-  /// **'Select time'**
-  String get searchSelectTime;
-
-  /// No description provided for @searchSwapTooltip.
-  ///
-  /// In en, this message translates to:
-  /// **'Swap From and To'**
-  String get searchSwapTooltip;
-
-  /// No description provided for @searchDeparture.
-  ///
-  /// In en, this message translates to:
-  /// **'Departure'**
-  String get searchDeparture;
-
-  /// No description provided for @searchDestination.
-  ///
-  /// In en, this message translates to:
-  /// **'Destination'**
-  String get searchDestination;
-
   /// No description provided for @searchSelectStop.
   ///
   /// In en, this message translates to:
   /// **'Select stop'**
   String get searchSelectStop;
 
-  /// No description provided for @searchStationHint.
-  ///
-  /// In en, this message translates to:
-  /// **'Search station'**
-  String get searchStationHint;
-
-  /// No description provided for @searchCurrentLocation.
-  ///
-  /// In en, this message translates to:
-  /// **'Current location'**
-  String get searchCurrentLocation;
-
-  /// No description provided for @searchSelectOnMap.
-  ///
-  /// In en, this message translates to:
-  /// **'Select on map'**
-  String get searchSelectOnMap;
-
-  /// No description provided for @searchNoNearbyStops.
-  ///
-  /// In en, this message translates to:
-  /// **'No nearby stops. Search above or use Select on map.'**
-  String get searchNoNearbyStops;
-
-  /// No description provided for @searchNoMatches.
-  ///
-  /// In en, this message translates to:
-  /// **'No matches for your search. Try another query or Select on map.'**
-  String get searchNoMatches;
-
-  /// No description provided for @searchEnableLocationForDistance.
-  ///
-  /// In en, this message translates to:
-  /// **'Enable location for distance'**
-  String get searchEnableLocationForDistance;
-
-  /// No description provided for @searchWaitingForGps.
-  ///
-  /// In en, this message translates to:
-  /// **'Waiting for GPS...'**
-  String get searchWaitingForGps;
-
-  /// No description provided for @searchUsingGps.
-  ///
-  /// In en, this message translates to:
-  /// **'Using your GPS position'**
-  String get searchUsingGps;
-
-  /// No description provided for @searchTapToRetryLocation.
-  ///
-  /// In en, this message translates to:
-  /// **'Tap to retry — enable precise location'**
-  String get searchTapToRetryLocation;
-
-  /// No description provided for @searchGettingLocation.
-  ///
-  /// In en, this message translates to:
-  /// **'Getting your location...'**
-  String get searchGettingLocation;
-
-  /// No description provided for @origin.
-  ///
-  /// In en, this message translates to:
-  /// **'Origin'**
-  String get origin;
-
-  /// No description provided for @destination.
-  ///
-  /// In en, this message translates to:
-  /// **'Destination'**
-  String get destination;
-
-  /// No description provided for @favoritesSavedJourneys.
-  ///
-  /// In en, this message translates to:
-  /// **'Saved journeys'**
-  String get favoritesSavedJourneys;
-
-  /// No description provided for @favoritesEmptyTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'No saved journeys yet'**
-  String get favoritesEmptyTitle;
-
-  /// No description provided for @favoritesEmptyBody.
-  ///
-  /// In en, this message translates to:
-  /// **'Search for a route, open its details, and tap Add to favorites.'**
-  String get favoritesEmptyBody;
-
-  /// No description provided for @favoritesDeleteTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Delete trip?'**
-  String get favoritesDeleteTitle;
-
-  /// No description provided for @favoritesDeleteBody.
-  ///
-  /// In en, this message translates to:
-  /// **'Remove this journey from your favorites?'**
-  String get favoritesDeleteBody;
-
   /// No description provided for @favoritesCouldNotLoad.
   ///
   /// In en, this message translates to:
-  /// **'Could not load saved journeys'**
+  /// **'Could not load favorites'**
   String get favoritesCouldNotLoad;
 
-  /// No description provided for @favoritesDirect.
+  /// No description provided for @favoritesCouldNotSave.
   ///
   /// In en, this message translates to:
-  /// **'Direct'**
-  String get favoritesDirect;
+  /// **'Could not save favorite'**
+  String get favoritesCouldNotSave;
 
-  /// No description provided for @favoritesTransfers.
+  /// No description provided for @favoritesStopsTitle.
   ///
   /// In en, this message translates to:
-  /// **'{count} transfers'**
-  String favoritesTransfers(int count);
+  /// **'Stops'**
+  String get favoritesStopsTitle;
 
-  /// No description provided for @favoritesOneTransfer.
+  /// No description provided for @favoritesStopsEmpty.
   ///
   /// In en, this message translates to:
-  /// **'1 transfer'**
-  String get favoritesOneTransfer;
+  /// **'No favorite stops yet. Open a stop on the map and tap the star.'**
+  String get favoritesStopsEmpty;
 
-  /// No description provided for @savedJourneyLabel.
+  /// No description provided for @favoritesLinesTitle.
   ///
   /// In en, this message translates to:
-  /// **'Saved journey'**
-  String get savedJourneyLabel;
+  /// **'Lines'**
+  String get favoritesLinesTitle;
 
-  /// No description provided for @mapWalkingRoute.
+  /// No description provided for @favoritesLinesEmpty.
   ///
   /// In en, this message translates to:
-  /// **'Walking route'**
-  String get mapWalkingRoute;
+  /// **'No favorite lines yet. In Timetable, tap the star next to a line.'**
+  String get favoritesLinesEmpty;
+
+  /// No description provided for @favoriteStopAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Favorite stop'**
+  String get favoriteStopAdd;
+
+  /// No description provided for @favoriteRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove favorite'**
+  String get favoriteRemove;
 
   /// No description provided for @mapRotateNorth.
   ///
@@ -911,131 +496,71 @@ abstract class AppLocalizations {
   /// **'Rotate map to north'**
   String get mapRotateNorth;
 
-  /// No description provided for @mapSearchRoutesHint.
+  /// No description provided for @mapSearchStationsHint.
   ///
   /// In en, this message translates to:
-  /// **'Search routes to see options here.'**
-  String get mapSearchRoutesHint;
+  /// **'Search Brașov stations'**
+  String get mapSearchStationsHint;
 
-  /// No description provided for @mapLoading.
+  /// No description provided for @mapScheduleNotLive.
   ///
   /// In en, this message translates to:
-  /// **'Loading…'**
-  String get mapLoading;
+  /// **'Schedule times · not live GPS'**
+  String get mapScheduleNotLive;
 
-  /// No description provided for @mapLoadMoreTripsWithRemaining.
+  /// No description provided for @stopBoardWindow.
   ///
   /// In en, this message translates to:
-  /// **'Load {count} more trips ({remaining} left)'**
-  String mapLoadMoreTripsWithRemaining(int count, int remaining);
+  /// **'Next {minutes} min'**
+  String stopBoardWindow(int minutes);
 
-  /// No description provided for @mapLoadMoreTrips.
+  /// No description provided for @stopBoardCouldNotLoad.
   ///
   /// In en, this message translates to:
-  /// **'Load {count} more {tripWord}'**
-  String mapLoadMoreTrips(int count, String tripWord);
+  /// **'Could not load schedule'**
+  String get stopBoardCouldNotLoad;
 
-  /// No description provided for @mapLoadNextTrips.
+  /// No description provided for @stopBoardEmpty.
   ///
   /// In en, this message translates to:
-  /// **'Load next {count} trips'**
-  String mapLoadNextTrips(int count);
+  /// **'No departures in the next {minutes} minutes'**
+  String stopBoardEmpty(int minutes);
 
-  /// No description provided for @mapTripSingular.
+  /// No description provided for @stopBoardShowMore.
   ///
   /// In en, this message translates to:
-  /// **'trip'**
-  String get mapTripSingular;
+  /// **'Show next {minutes} minutes'**
+  String stopBoardShowMore(int minutes);
 
-  /// No description provided for @mapTripPlural.
+  /// No description provided for @stopBoardUntil.
   ///
   /// In en, this message translates to:
-  /// **'trips'**
-  String get mapTripPlural;
+  /// **'Until {time}'**
+  String stopBoardUntil(String time);
 
-  /// No description provided for @mapNoTransfers.
+  /// No description provided for @stopBoardEmptyUntil.
   ///
   /// In en, this message translates to:
-  /// **'No transfers'**
-  String get mapNoTransfers;
+  /// **'No departures until {time}'**
+  String stopBoardEmptyUntil(String time);
 
-  /// No description provided for @mapTransfers.
+  /// No description provided for @stopBoardFeedEnded.
   ///
   /// In en, this message translates to:
-  /// **'{count} transfers'**
-  String mapTransfers(int count);
+  /// **'Timetable data ended on {date}. Update the app to see departures.'**
+  String stopBoardFeedEnded(String date);
 
-  /// No description provided for @mapOneTransfer.
+  /// No description provided for @stopOpenInGoogleMaps.
   ///
   /// In en, this message translates to:
-  /// **'1 transfer'**
-  String get mapOneTransfer;
+  /// **'Open in Google Maps'**
+  String get stopOpenInGoogleMaps;
 
-  /// No description provided for @mapAddToFavorites.
+  /// No description provided for @busSearchLineHint.
   ///
   /// In en, this message translates to:
-  /// **'Add to favorites'**
-  String get mapAddToFavorites;
-
-  /// No description provided for @mapSteps.
-  ///
-  /// In en, this message translates to:
-  /// **'Steps'**
-  String get mapSteps;
-
-  /// No description provided for @mapPriceLei.
-  ///
-  /// In en, this message translates to:
-  /// **'{price} lei'**
-  String mapPriceLei(int price);
-
-  /// No description provided for @mapTransfersAndPrice.
-  ///
-  /// In en, this message translates to:
-  /// **'{transfers} • {price}'**
-  String mapTransfersAndPrice(String transfers, String price);
-
-  /// No description provided for @transitBus.
-  ///
-  /// In en, this message translates to:
-  /// **'Bus'**
-  String get transitBus;
-
-  /// No description provided for @transitTrolleybus.
-  ///
-  /// In en, this message translates to:
-  /// **'Trolleybus'**
-  String get transitTrolleybus;
-
-  /// No description provided for @transitTram.
-  ///
-  /// In en, this message translates to:
-  /// **'Tram'**
-  String get transitTram;
-
-  /// No description provided for @transitTrain.
-  ///
-  /// In en, this message translates to:
-  /// **'Train'**
-  String get transitTrain;
-
-  /// No description provided for @transitMetro.
-  ///
-  /// In en, this message translates to:
-  /// **'Metro'**
-  String get transitMetro;
-
-  /// No description provided for @transitWalk.
-  ///
-  /// In en, this message translates to:
-  /// **'Walk'**
-  String get transitWalk;
-
-  /// No description provided for @transitGeneric.
-  ///
-  /// In en, this message translates to:
-  /// **'Transit'**
-  String get transitGeneric;
+  /// **'Search line number or name'**
+  String get busSearchLineHint;
 }
 
 class _AppLocalizationsDelegate

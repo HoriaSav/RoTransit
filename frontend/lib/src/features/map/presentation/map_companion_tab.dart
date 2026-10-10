@@ -1,12 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:rotransit/l10n/app_localizations.dart';
 
 import '../../../core/theme/app_extra_colors.dart';
 import '../../routes/domain/route_models.dart';
 import '../../shell/state/navigation_provider.dart';
 import '../data/companion_catalog.dart';
-import 'stop_board_sheet.dart';
 
 /// Focus map camera on a companion stop (watched by [MapTab]).
 final companionFocusStopProvider =
@@ -25,42 +26,69 @@ class _MapCompanionTabState extends ConsumerState<MapCompanionTab> {
   final _focus = FocusNode();
   List<StopSearchItem> _suggestions = const [];
   bool _searching = false;
+  Timer? _debounce;
+  int _queryToken = 0;
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _controller.dispose();
     _focus.dispose();
     super.dispose();
   }
 
-  Future<void> _onQueryChanged(String value) async {
+  void _onQueryChanged(String value) {
+    _debounce?.cancel();
+    // Newer keystrokes invalidate any search still in flight.
+    final token = ++_queryToken;
     final q = value.trim();
     if (q.length < 2) {
-      setState(() => _suggestions = const []);
+      setState(() {
+        _suggestions = const [];
+        _searching = false;
+      });
       return;
     }
-    setState(() => _searching = true);
-    final results =
-        await ref.read(companionCatalogProvider).searchStops(q, limit: 12);
-    if (!mounted) return;
-    setState(() {
-      _suggestions = results;
-      _searching = false;
-    });
+    _debounce = Timer(
+      const Duration(milliseconds: 150),
+      () => _runSearch(q, token),
+    );
   }
 
-  Future<void> _selectStop(StopSearchItem stop) async {
+  Future<void> _runSearch(String q, int token) async {
+    setState(() => _searching = true);
+    var results = const <StopSearchItem>[];
+    try {
+      results =
+          await ref.read(companionCatalogProvider).searchStops(q, limit: 12);
+    } catch (_) {
+      // Pack not readable: show no suggestions instead of spinning forever.
+    } finally {
+      if (mounted && token == _queryToken) {
+        setState(() {
+          _suggestions = results;
+          _searching = false;
+        });
+      }
+    }
+  }
+
+  void _selectStop(StopSearchItem stop) {
+    _debounce?.cancel();
+    _queryToken++;
     _controller.text = stop.name;
-    setState(() => _suggestions = const []);
+    setState(() {
+      _suggestions = const [];
+      _searching = false;
+    });
     _focus.unfocus();
+    // MapTab listens, moves the camera and opens the stop board (only once).
     ref.read(companionFocusStopProvider.notifier).state = stop;
-    ref.read(showMapSheetProvider.notifier).state = false;
-    if (!mounted) return;
-    await showStopBoardSheet(context, stop: stop);
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final extra = context.extraColors;
     final scheme = Theme.of(context).colorScheme;
     final topPad = MediaQuery.paddingOf(context).top + 8;
@@ -91,14 +119,14 @@ class _MapCompanionTabState extends ConsumerState<MapCompanionTab> {
                           onChanged: _onQueryChanged,
                           textInputAction: TextInputAction.search,
                           decoration: InputDecoration(
-                            hintText: 'Search Brașov stations',
+                            hintText: l10n.mapSearchStationsHint,
                             prefixIcon: const Icon(Icons.search_rounded),
                             suffixIcon: _controller.text.isEmpty
                                 ? null
                                 : IconButton(
                                     onPressed: () {
                                       _controller.clear();
-                                      setState(() => _suggestions = const []);
+                                      _onQueryChanged('');
                                     },
                                     icon: const Icon(Icons.close_rounded),
                                   ),
@@ -117,7 +145,7 @@ class _MapCompanionTabState extends ConsumerState<MapCompanionTab> {
                       elevation: 2,
                       shape: const CircleBorder(),
                       child: IconButton(
-                        tooltip: 'Settings',
+                        tooltip: l10n.settingsTitle,
                         onPressed: () {
                           ref.read(settingsOpenProvider.notifier).state = true;
                         },
@@ -173,11 +201,11 @@ class _MapCompanionTabState extends ConsumerState<MapCompanionTab> {
                   child: Material(
                     color: extra.floatingNavBackground.withValues(alpha: 0.92),
                     borderRadius: BorderRadius.circular(20),
-                    child: const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       child: Text(
-                        'Schedule times · not live GPS',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                        l10n.mapScheduleNotLive,
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
                       ),
                     ),
                   ),
@@ -188,11 +216,4 @@ class _MapCompanionTabState extends ConsumerState<MapCompanionTab> {
       ],
     );
   }
-}
-
-/// Helper for MapTab camera moves.
-LatLng? companionStopLatLng(StopSearchItem? stop) {
-  if (stop == null) return null;
-  if (stop.lat == 0 && stop.lon == 0) return null;
-  return LatLng(stop.lat, stop.lon);
 }

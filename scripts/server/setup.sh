@@ -51,13 +51,13 @@ ensure_env_file "$REPO_ROOT/db/postgres/.env.example" "$REPO_ROOT/db/postgres/.e
 ensure_env_file "$REPO_ROOT/cloudflare/.env.example" "$REPO_ROOT/cloudflare/.env" "Cloudflare env"
 
 if [[ ! -f "$REPO_ROOT/otp/gtfs/ro-ratbv.zip" ]]; then
-  echo "Missing GTFS feed: otp/gtfs/ro-ratbv.zip (see doc/otp-setup.md)" >&2
+  echo "Missing GTFS feed: otp/gtfs/ro-ratbv.zip (see README.md, Run it)" >&2
   exit 1
 fi
 echo "[ok] GTFS feed present: otp/gtfs/ro-ratbv.zip"
 
 if ! compgen -G "$REPO_ROOT/otp/osm/*.pbf" > /dev/null; then
-  echo "[warn] No OSM .pbf found under otp/osm/ — OTP graph build may fail until you add one (see doc/otp-setup.md)"
+  echo "[warn] No OSM .pbf found under otp/osm/ — OTP graph build may fail until you add one (see README.md, Run it)"
 else
   echo "[ok] OSM extract present under otp/osm/"
 fi

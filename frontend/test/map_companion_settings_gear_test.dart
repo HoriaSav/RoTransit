@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rotransit/l10n/app_localizations.dart';
 import 'package:rotransit/src/core/theme/app_theme.dart';
 import 'package:rotransit/src/features/map/presentation/map_companion_tab.dart';
 import 'package:rotransit/src/features/shell/state/navigation_provider.dart';
@@ -17,6 +18,8 @@ void main() {
         container: container,
         child: MaterialApp(
           theme: AppTheme.lightTheme,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: const Scaffold(body: MapCompanionTab()),
         ),
       ),

@@ -29,6 +29,7 @@ public class RouteController {
         this.routeService = routeService;
     }
 
+    // Not called by the app yet (it reads the bundled Brașov pack); kept on purpose for a future planner.
     @GetMapping("/routes/search")
     public RouteSearchResponse searchRoutes(
             @RequestParam UUID cityId,
@@ -50,6 +51,7 @@ public class RouteController {
                 includeGeometry);
     }
 
+    // Not called by the app yet (it reads the bundled Brașov pack); kept on purpose for a future planner.
     @GetMapping("/stops/nearby")
     public List<NearbyStopResponse> getNearbyStops(
             @RequestParam UUID cityId,
@@ -60,6 +62,7 @@ public class RouteController {
         return routeService.nearbyStops(cityId, lat, lon, radiusMeters);
     }
 
+    // Not called by the app yet (it reads the bundled Brașov pack); kept on purpose for a future planner.
     @GetMapping("/stops/search")
     public List<NearbyStopResponse> searchStops(
             @RequestParam UUID cityId,
@@ -80,6 +83,8 @@ public class RouteController {
     /**
      * Picks the concrete GTFS stop for a rider-facing name by comparing OTP itineraries from {@code origin}
      * (fewer transfers, then shorter trip time, then less walking).
+     *
+     * <p>Not called by the app yet (it reads the bundled Brașov pack); kept on purpose for a future planner.
      */
     @GetMapping("/stops/resolve-for-route")
     public NearbyStopResponse resolveStopForRoute(

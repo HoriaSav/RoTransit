@@ -5,20 +5,17 @@ class _BusDetailHeader extends StatelessWidget {
     required this.title,
     this.badgeLabel,
     this.trailing,
-    this.subtitles = const [],
   });
 
   final String title;
   final String? badgeLabel;
   final Widget? trailing;
-  final List<String> subtitles;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final scheme = Theme.of(context).colorScheme;
     final extra = context.extraColors;
-    final hasSubtitles = subtitles.isNotEmpty;
     final badge = accentBadgeColors(context);
 
     return SafeArea(
@@ -31,7 +28,7 @@ class _BusDetailHeader extends StatelessWidget {
           ),
         ),
         child: Padding(
-          padding: EdgeInsets.fromLTRB(0, 4, 8, hasSubtitles ? 10 : 4),
+          padding: const EdgeInsets.fromLTRB(0, 4, 8, 4),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -71,26 +68,10 @@ class _BusDetailHeader extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        fontSize: hasSubtitles ? 17 : 16,
+                        fontSize: 16,
                         fontWeight: FontWeight.w700,
                         height: 1.2,
                         color: scheme.onSurface,
-                      ),
-                    ),
-                    ...subtitles.map(
-                      (line) => Padding(
-                        padding: const EdgeInsets.only(top: 3),
-                        child: Text(
-                          line,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
-                            height: 1.25,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
                       ),
                     ),
                   ],
@@ -110,19 +91,25 @@ class _BusStopsScreen extends ConsumerStatefulWidget {
     required this.routeId,
     required this.shortName,
     required this.longName,
+    this.initialStopId,
+    this.initialDirectionId,
   });
 
   final String routeId;
   final String shortName;
   final String longName;
 
+  /// Preselected stop and direction when opened from a stop board departure.
+  final String? initialStopId;
+  final String? initialDirectionId;
+
   @override
   ConsumerState<_BusStopsScreen> createState() => _BusStopsScreenState();
 }
 
 class _BusStopsScreenState extends ConsumerState<_BusStopsScreen> {
-  bool _isReverse = false;
-  String? _selectedStopId;
+  late bool _isReverse = widget.initialDirectionId == '1';
+  late String? _selectedStopId = widget.initialStopId;
 
   String get _badgeLabel {
     final short = widget.shortName.trim();
@@ -199,6 +186,8 @@ class _BusStopsScreenState extends ConsumerState<_BusStopsScreen> {
                   (s) => s.stopId == selectedId,
                   orElse: () => items.first,
                 );
+                // Each direction's stop list is in travel order, so the last
+                // stop is where this direction goes.
                 final destination = items.last.name.trim();
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -207,9 +196,7 @@ class _BusStopsScreenState extends ConsumerState<_BusStopsScreen> {
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                         child: Text(
-                          _isReverse
-                              ? l10n.busFrom(destination)
-                              : l10n.busTowards(destination),
+                          l10n.busTowards(destination),
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w500,
@@ -285,8 +272,6 @@ class _BusStopsScreenState extends ConsumerState<_BusStopsScreen> {
                         stopId: selected.stopId,
                         stopName: selected.name,
                         directionId: directionId,
-                        destinationName: destination,
-                        isReversed: _isReverse,
                       ),
                     ),
                   ],
@@ -309,8 +294,6 @@ class _EmbeddedLineTimetable extends ConsumerStatefulWidget {
     required this.stopId,
     required this.stopName,
     required this.directionId,
-    required this.destinationName,
-    required this.isReversed,
   });
 
   final String routeId;
@@ -319,8 +302,6 @@ class _EmbeddedLineTimetable extends ConsumerStatefulWidget {
   final String stopId;
   final String stopName;
   final String directionId;
-  final String destinationName;
-  final bool isReversed;
 
   @override
   ConsumerState<_EmbeddedLineTimetable> createState() =>
@@ -335,11 +316,13 @@ class _EmbeddedLineTimetableState extends ConsumerState<_EmbeddedLineTimetable> 
   @override
   void initState() {
     super.initState();
-    final base = DateTime.now();
-    final date = DateTime(base.year, base.month, base.day);
-    _mondayDate = date.subtract(Duration(days: date.weekday - DateTime.monday));
-    _saturdayDate = _mondayDate.add(const Duration(days: 5));
-    _sundayDate = _mondayDate.add(const Duration(days: 6));
+    // Only the weekday matters: the tabs show the regular Mon–Fri / Sat /
+    // Sun pattern, not this week's holidays.
+    final now = ref.read(clockProvider)();
+    final monday = now.day - (now.weekday - DateTime.monday);
+    _mondayDate = DateTime(now.year, now.month, monday);
+    _saturdayDate = DateTime(now.year, now.month, monday + 5);
+    _sundayDate = DateTime(now.year, now.month, monday + 6);
   }
 
   @override

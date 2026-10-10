@@ -84,11 +84,6 @@ class FavoriteStopsRepository {
     return out;
   }
 
-  Future<bool> isLineFavorite(String routeId) async {
-    final list = await listLines();
-    return list.any((l) => l.routeId == routeId);
-  }
-
   Future<void> toggleLine(BusLine line) async {
     final prefs = await _prefs;
     final list = await listLines();

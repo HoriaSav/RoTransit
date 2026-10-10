@@ -30,6 +30,8 @@ void main() {
   });
 
   tearDown(() async {
+    // Each test gets a fresh documents dir, so drop the catalog's open handle.
+    await CompanionCatalog.instance.reset();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
       const MethodChannel('plugins.flutter.io/path_provider'),
@@ -84,5 +86,24 @@ void main() {
     expect(CompanionCatalog.dayKindFor(sunday), 'SUNDAY');
     expect(sat.departures, isNotNull);
     expect(sun.departures, isNotNull);
+  });
+
+  test('public holidays from calendar_dates use the Sunday schedule', () async {
+    final catalog = CompanionCatalog.instance;
+    // Friday 25 Dec 2026 runs Sunday services in the RATBV feed.
+    expect(await catalog.serviceDayKindFor(DateTime(2026, 12, 25)), 'SUNDAY');
+    expect(await catalog.serviceDayKindFor(DateTime(2026, 12, 23)), 'MONFRI');
+  });
+
+  test('stop board after midnight includes the previous day\'s late trips',
+      () async {
+    // Monday service has a 24:05 departure here; on Tuesday 00:00 it is
+    // five minutes away.
+    final board = await CompanionCatalog.instance.stopBoard(
+      stopId: 'node/11671674450',
+      from: DateTime(2026, 9, 29),
+      windowMinutes: 30,
+    );
+    expect(board.map((d) => d.departureTime), contains('24:05:00'));
   });
 }
