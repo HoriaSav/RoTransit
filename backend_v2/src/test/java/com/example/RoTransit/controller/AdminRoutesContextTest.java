@@ -52,6 +52,9 @@ class AdminRoutesContextTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private java.time.Clock clock; // the app's Bucharest clock, the same one daysLeft uses
+
     @MockitoBean
     private FeedService feedService;
 
@@ -127,7 +130,7 @@ class AdminRoutesContextTest {
 
     @Test
     void statusListFromTheDatabaseIsNullsFirstThenAscendingWithDaysLeftAndNoLocalPath() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(clock);
         insert("CtxNull", null);
         insert("CtxPast", today.minusDays(3));
         insert("CtxTieA", today.plusDays(10));
@@ -142,7 +145,8 @@ class AdminRoutesContextTest {
 
         assertThat(list).hasSize(total);
         for (Map<String, Object> entry : list) {
-            assertThat(entry).containsOnlyKeys("id", "cityName", "companyName", "status", "downloadedAt", "expiresOn", "daysLeft");
+            assertThat(entry).containsOnlyKeys("id", "cityName", "companyName", "status", "downloadedAt", "expiresOn", "daysLeft",
+                    "upcomingStartsOn");
         }
         // whole list (real rows + probes): every null before every date, dates never decreasing
         List<LocalDate> expires = new ArrayList<>();
@@ -169,7 +173,7 @@ class AdminRoutesContextTest {
     @Test
     void statusListTieBreaksByIdEvenWhenTheDatabaseReturnsRowsOutOfIdOrder() throws Exception {
         // explicit ids inserted in descending order, so a plain findAll() (heap order) may return them high-to-low
-        LocalDate same = LocalDate.now().plusDays(500);
+        LocalDate same = LocalDate.now(clock).plusDays(500);
         insertWithId(9_000_003L, "CtxSameC", same);
         insertWithId(9_000_002L, "CtxSameB", same);
         insertWithId(9_000_001L, "CtxSameA", same);

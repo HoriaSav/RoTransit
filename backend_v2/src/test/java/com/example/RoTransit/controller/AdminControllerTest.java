@@ -29,6 +29,8 @@ import java.util.Optional;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.hamcrest.Matchers.aMapWithSize;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasKey;
@@ -70,7 +72,8 @@ class AdminControllerTest {
 
     @BeforeEach
     void setUp() {
-        mvc = MockMvcBuilders.standaloneSetup(new AdminController(repo, sources, versions, feedService, feedUpdateJob)).build();
+        mvc = MockMvcBuilders.standaloneSetup(new AdminController(repo, sources, versions, feedService, feedUpdateJob,
+                TestEntities.CLOCK)).build();
         when(repo.findAll()).thenReturn(feedList);
         when(versions.findCurrentByFeedId()).thenReturn(currentVersions);
         when(versions.findLatestByFeedId()).thenReturn(latestVersions);
@@ -166,7 +169,8 @@ class AdminControllerTest {
 
         mvc.perform(get("/admin/feeds/3"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$", aMapWithSize(9)))
+                .andExpect(jsonPath("$", aMapWithSize(10)))
+                .andExpect(jsonPath("$.upcoming").value(nullValue()))
                 .andExpect(jsonPath("$.cityName").value("Testville"))
                 .andExpect(jsonPath("$.companyName").value("TestvilleCo"))
                 .andExpect(jsonPath("$.sourceId").value("mdb-3"))
@@ -246,14 +250,15 @@ class AdminControllerTest {
 
     @Test
     void statusListHasExactlyTheFeedStatusFieldsWithCorrectValues() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = TestEntities.TODAY;
         feed(7L, "Sibiu", today.plusDays(30));
 
         mvc.perform(get("/admin/feeds"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$", hasSize(1)))
-                .andExpect(jsonPath("$[0]", aMapWithSize(7)))
+                .andExpect(jsonPath("$[0]", aMapWithSize(8)))
+                .andExpect(jsonPath("$[0].upcomingStartsOn").value(nullValue()))
                 .andExpect(jsonPath("$[0].id").value(7))
                 .andExpect(jsonPath("$[0].cityName").value("Sibiu"))
                 .andExpect(jsonPath("$[0].companyName").value("SibiuCo"))
@@ -268,7 +273,7 @@ class AdminControllerTest {
 
     @Test
     void daysLeftIsDaysFromTodayNegativeWhenExpiredAndNullWithoutExpiry() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = TestEntities.TODAY;
         feed(1L, "Future", today.plusDays(400));
         feed(2L, "Today", today);
         feed(3L, "Past", today.minusDays(3));
@@ -287,7 +292,7 @@ class AdminControllerTest {
 
     @Test
     void statusListIsNullsFirstThenExpiresOnAscendingWithTiesById() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = TestEntities.TODAY;
         feed(1L, "A", today.plusDays(10));
         feed(2L, "B", null);
         feed(3L, "C", today.minusDays(3));
@@ -306,7 +311,7 @@ class AdminControllerTest {
 
     @Test
     void tiesAreBrokenByIdWhateverOrderTheRepositoryReturns() throws Exception {
-        LocalDate today = LocalDate.now();
+        LocalDate today = TestEntities.TODAY;
         LocalDate same = today.plusDays(20);
         // reverse / shuffled id order on purpose: two nulls, three on the same date, one earlier, one later
         feed(9L, "I", same);
@@ -333,7 +338,7 @@ class AdminControllerTest {
 
     @Test
     void statusIsFailedWhenTheLatestAttemptFailedButDatesStayFromTheCurrentVersion() throws Exception {
-        LocalDate expires = LocalDate.now().plusDays(30);
+        LocalDate expires = TestEntities.TODAY.plusDays(30);
         Feed feed = feed(7L, "Sibiu", expires);
         latestVersions.put(7L, TestEntities.version(701L, feed, FeedVersion.FAILED, null, null));
 
@@ -366,5 +371,74 @@ class AdminControllerTest {
         mvc.perform(get("/admin/feeds"))
                 .andExpect(jsonPath("$[0].status").value("failed"))
                 .andExpect(jsonPath("$[0].expiresOn").value(nullValue()));
+    }
+
+    // ---- upcoming versions ----
+
+    /** Gives the feed an upcoming version (stubbed for the list and for /admin/feeds/{id}). */
+    private FeedVersion upcoming(Feed feed, LocalDate startsOn) {
+        FeedVersion upcoming = TestEntities.version(feed.getId() * 100 + 1, feed, FeedVersion.UPCOMING,
+                "feeds/" + feed.getId() + "/up.zip", LocalDate.of(2027, 6, 30));
+        upcoming.setStartsOn(startsOn);
+        upcoming.setSha256("up-sha");
+        when(versions.findUpcomingByFeedId()).thenReturn(Map.of(feed.getId(), upcoming));
+        when(versions.findByFeedIdAndStatus(feed.getId(), FeedVersion.UPCOMING)).thenReturn(Optional.of(upcoming));
+        return upcoming;
+    }
+
+    @Test
+    void statusListShowsWhenTheUpcomingVersionStarts() throws Exception {
+        Feed feed = feed(7L, "Sibiu", LocalDate.of(2026, 11, 30));
+        upcoming(feed, LocalDate.of(2026, 11, 15));
+
+        mvc.perform(get("/admin/feeds"))
+                .andExpect(jsonPath("$[0].upcomingStartsOn").value("2026-11-15"))
+                // daysLeft counts from the Clock's today (2026-10-10), not the server's date
+                .andExpect(jsonPath("$[0].daysLeft").value(51))
+                .andExpect(jsonPath("$[0].expiresOn").value("2026-11-30"));
+    }
+
+    @Test
+    void feedDetailsShowTheUpcomingVersion() throws Exception {
+        Feed feed = feed(3L, "Testville", LocalDate.of(2027, 1, 1));
+        upcoming(feed, LocalDate.of(2026, 11, 15));
+
+        mvc.perform(get("/admin/feeds/3"))
+                .andExpect(jsonPath("$.upcoming.sha256").value("up-sha"))
+                .andExpect(jsonPath("$.upcoming.startsOn").value("2026-11-15"))
+                .andExpect(jsonPath("$.upcoming.expiresOn").value("2027-06-30"))
+                .andExpect(jsonPath("$.upcoming.filePath").doesNotExist())
+                .andExpect(jsonPath("$.expiresOn").value("2027-01-01")); // the rest is still the current version
+    }
+
+    @Test
+    void promoteSwitchesToTheUpcomingVersionAndReturnsTheFeed() throws Exception {
+        Feed feed = feed(8L, "Iasi", LocalDate.of(2026, 10, 20));
+        FeedVersion upcoming = upcoming(feed, LocalDate.of(2026, 11, 1));
+        when(feedService.promoteUpcoming(8L)).thenReturn(Optional.of(upcoming));
+
+        mvc.perform(post("/admin/feeds/8/promote"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(8));
+        verify(feedService).promoteUpcoming(8L);
+    }
+
+    @Test
+    void promoteWithoutAnUpcomingVersionIs404() throws Exception {
+        feed(8L, "Iasi", LocalDate.of(2026, 10, 20));
+        when(feedService.promoteUpcoming(8L)).thenReturn(Optional.empty());
+
+        mvc.perform(post("/admin/feeds/8/promote"))
+                .andExpect(status().isNotFound())
+                .andExpect(status().reason("feed has no upcoming version"));
+    }
+
+    @Test
+    void promoteOfAnUnknownFeedIsNotFoundAndPromotesNothing() {
+        when(repo.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> mvc.perform(post("/admin/feeds/99/promote")))
+                .hasRootCauseInstanceOf(NoSuchElementException.class);
+        verify(feedService, never()).promoteUpcoming(anyLong());
     }
 }

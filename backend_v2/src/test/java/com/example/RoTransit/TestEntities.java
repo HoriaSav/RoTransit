@@ -6,11 +6,17 @@ import com.example.RoTransit.entity.FeedSource;
 import com.example.RoTransit.entity.FeedVersion;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 
 /** Builds entities for unit tests. Ids are normally set by the database, so here they are set by reflection. */
 public final class TestEntities {
+    /** A fixed "now" for unit tests: 10 Oct 2026, 12:00 in Bucharest. */
+    public static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-10T09:00:00Z"), ZoneId.of("Europe/Bucharest"));
+    public static final LocalDate TODAY = LocalDate.now(CLOCK);
+
     private TestEntities() {
     }
 

@@ -1,5 +1,7 @@
 package com.example.RoTransit.service;
 
+import com.example.RoTransit.TestEntities;
+
 import com.example.RoTransit.entity.Feed;
 import com.example.RoTransit.entity.FeedVersion;
 import com.example.RoTransit.repository.FeedRepository;
@@ -23,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
+import static com.example.RoTransit.TestEntities.TODAY;
 import static com.example.RoTransit.TestEntities.current;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -41,14 +44,14 @@ import static org.mockito.Mockito.when;
  * FeedUpdateJob with mocked repositories/service. The job decides from the current version's expiresOn (and whether
  * its file exists); it must never open the zip itself (no getExpireDate/readExpireDate calls) and never saves
  * anything itself: FeedService.download stores successes and failures.
- * The job uses LocalDate.now() directly, so dates here are relative to LocalDate.now().
+ * The job's "today" comes from TestEntities.CLOCK, so dates here are relative to TODAY.
  */
 class FeedUpdateJobTest {
 
     private final FeedRepository repo = mock(FeedRepository.class);
     private final FeedVersionRepository versions = mock(FeedVersionRepository.class);
     private final FeedService service = mock(FeedService.class);
-    private final FeedUpdateJob job = new FeedUpdateJob(repo, versions, service);
+    private final FeedUpdateJob job = new FeedUpdateJob(repo, versions, service, TestEntities.CLOCK);
 
     /** Current version of each feed, as findCurrentByFeedId() returns it. */
     private final Map<Long, FeedVersion> currentVersions = new HashMap<>();
@@ -109,7 +112,7 @@ class FeedUpdateJobTest {
     @NullAndEmptySource
     @ValueSource(strings = {"   ", "/definitely/not/here/feed.zip"})
     void missingLocalFileDownloadsEvenWhenExpiryIsFarAway(String filePath) throws Exception {
-        List<String> lines = run(feed(1, "NoFile", filePath, LocalDate.now().plusYears(1)));
+        List<String> lines = run(feed(1, "NoFile", filePath, TODAY.plusYears(1)));
 
         assertThat(lines).containsExactly("NoFile has been updated!");
         verify(service, times(1)).download(1L);
@@ -138,7 +141,7 @@ class FeedUpdateJobTest {
     @ParameterizedTest
     @ValueSource(ints = {-30, -1, 0, 1, 6})
     void expiryBeforeTodayPlusSevenDownloads(int daysFromToday) throws Exception {
-        List<String> lines = run(feed(1, "Soon", existingZip().toString(), LocalDate.now().plusDays(daysFromToday)));
+        List<String> lines = run(feed(1, "Soon", existingZip().toString(), TODAY.plusDays(daysFromToday)));
 
         assertThat(lines).containsExactly("Soon has been updated!");
         verify(service, times(1)).download(1L);
@@ -148,7 +151,7 @@ class FeedUpdateJobTest {
     @Test
     void expiryExactlySevenDaysAheadIsStillUpToDate() throws Exception {
         // boundary as implemented: expires.isBefore(today + 7), so today + 7 does NOT trigger a download
-        List<String> lines = run(feed(1, "Boundary", existingZip().toString(), LocalDate.now().plusDays(7)));
+        List<String> lines = run(feed(1, "Boundary", existingZip().toString(), TODAY.plusDays(7)));
 
         assertThat(lines).containsExactly("Boundary is up to date!");
         verify(service, never()).download(anyLong());
@@ -156,7 +159,7 @@ class FeedUpdateJobTest {
 
     @Test
     void farFutureExpiryIsUpToDateWithoutDownloadingOrReadingTheZip() throws Exception {
-        List<String> lines = run(feed(1, "Fresh", existingZip().toString(), LocalDate.now().plusDays(30)));
+        List<String> lines = run(feed(1, "Fresh", existingZip().toString(), TODAY.plusDays(30)));
 
         assertThat(lines).containsExactly("Fresh is up to date!");
         verify(service, never()).download(anyLong());
@@ -167,7 +170,7 @@ class FeedUpdateJobTest {
     @Test
     void currentVersionsAreLoadedOnceForTheWholeRun() throws Exception {
         String present = existingZip().toString();
-        run(feed(1, "A", present, LocalDate.now().plusDays(30)), feed(2, "B", present, LocalDate.now().plusDays(30)));
+        run(feed(1, "A", present, TODAY.plusDays(30)), feed(2, "B", present, TODAY.plusDays(30)));
 
         verify(versions, times(1)).findCurrentByFeedId();
         verify(versions, never()).findByFeedIdAndStatus(anyLong(), any());
@@ -188,8 +191,8 @@ class FeedUpdateJobTest {
 
     @Test
     void consumerFailureOnAnUpToDateFeedNeverMarksItFailedOrSaves() throws Exception {
-        Feed fresh = feed(3, "Fresh", existingZip().toString(), LocalDate.now().plusDays(30));
-        Feed next = feed(4, "Next", existingZip().toString(), LocalDate.now().plusDays(30));
+        Feed fresh = feed(3, "Fresh", existingZip().toString(), TODAY.plusDays(30));
+        Feed next = feed(4, "Next", existingZip().toString(), TODAY.plusDays(30));
         stubFeeds(fresh, next);
 
         assertThatThrownBy(() -> job.updateFeeds(line -> { throw new RuntimeException("Broken pipe"); }))
@@ -227,12 +230,12 @@ class FeedUpdateJobTest {
     @Test
     void mixedListEmitsExactlyOneLinePerFeedInOrder() throws Exception {
         String present = existingZip().toString();
-        Feed missingPath = feed(1, "NoPath", null, LocalDate.now().plusYears(1));
+        Feed missingPath = feed(1, "NoPath", null, TODAY.plusYears(1));
         Feed noExpiry = feed(2, "NoExpiry", present, null);
-        Feed fresh = feed(3, "Fresh", present, LocalDate.now().plusDays(30));
-        Feed expiring = feed(4, "Expiring", present, LocalDate.now().plusDays(2));
+        Feed fresh = feed(3, "Fresh", present, TODAY.plusDays(30));
+        Feed expiring = feed(4, "Expiring", present, TODAY.plusDays(2));
         Feed downloadFails = feed(5, "DownloadFails", null, null);
-        Feed fresh2 = feed(6, "Fresh2", present, LocalDate.now().plusYears(2));
+        Feed fresh2 = feed(6, "Fresh2", present, TODAY.plusYears(2));
         when(service.download(5L)).thenThrow(new IllegalStateException("source returned 403"));
 
         List<String> lines = run(missingPath, noExpiry, fresh, expiring, downloadFails, fresh2);
@@ -256,8 +259,8 @@ class FeedUpdateJobTest {
 
     @Test
     void sameFileFromTheSourceIsReportedAsUnchangedNotAsUpdated() throws Exception {
-        Feed expiring = feed(1, "Same", existingZip().toString(), LocalDate.now().plusDays(2));
-        Feed fresh = feed(2, "Fresh", existingZip().toString(), LocalDate.now().plusDays(30));
+        Feed expiring = feed(1, "Same", existingZip().toString(), TODAY.plusDays(2));
+        Feed fresh = feed(2, "Fresh", existingZip().toString(), TODAY.plusDays(30));
         Feed changed = feed(3, "Changed", null, null);
         when(service.download(1L)).thenReturn(new DownloadResult(currentVersions.get(1L), true));
 
@@ -280,7 +283,8 @@ class FeedUpdateJobTest {
     @Test
     void noFeedsMeansNoLines() {
         assertThat(run()).isEmpty();
-        verifyNoInteractions(service);
+        verify(service).sweepOrphanFiles(); // the sweep still runs; nothing is downloaded or promoted
+        verifyNoMoreInteractions(service);
     }
 
     // ---- interruption (r19) ----
@@ -288,8 +292,8 @@ class FeedUpdateJobTest {
     /** Three feeds that all need a download: missing file, expiring in 2 days, null expiresOn. */
     private Feed[] threeFeedsThatAllNeedADownload() throws IOException {
         return new Feed[] {
-                feed(1, "Cluj", null, LocalDate.now().plusYears(1)),
-                feed(2, "Iasi", existingZip().toString(), LocalDate.now().plusDays(2)),
+                feed(1, "Cluj", null, TODAY.plusYears(1)),
+                feed(2, "Iasi", existingZip().toString(), TODAY.plusDays(2)),
                 feed(3, "Brasov", existingZip().toString(), null)
         };
     }
@@ -326,8 +330,11 @@ class FeedUpdateJobTest {
         verify(onResult, times(2)).accept(lines.capture());
         assertThat(lines.getAllValues()).containsExactly("Cluj has been updated!", "Iasi interrupted, update stopped");
         InOrder order = inOrder(versions, repo, service, onResult);
-        order.verify(versions).findCurrentByFeedId();
+        order.verify(service).sweepOrphanFiles(); // cleanup first
         order.verify(repo).findAll();
+        order.verify(versions).findUpcomingByFeedId(); // promotion first (nothing due here)
+        order.verify(versions).findCurrentByFeedId();
+        order.verify(versions).findUpcomingByFeedId(); // read again: a promotion may have changed it
         order.verify(service).download(1L);
         order.verify(onResult).accept("Cluj has been updated!");
         order.verify(service).download(2L);
@@ -355,6 +362,8 @@ class FeedUpdateJobTest {
         verify(service, never()).download(3L);
         verify(repo).findAll();
         verify(versions).findCurrentByFeedId();
+        verify(versions, times(2)).findUpcomingByFeedId(); // once for promotion, once for the download decisions
+        verify(service).sweepOrphanFiles();
         verifyNoMoreInteractions(repo, versions, service, onResult);
     }
 
@@ -398,5 +407,196 @@ class FeedUpdateJobTest {
         verify(service).download(2L);
         verify(service, never()).download(3L);
         verifyJobSavedNothing();
+    }
+
+    // ---- upcoming versions: promotion and "expiring" judged on the newest version ----
+
+    private final Map<Long, FeedVersion> upcomingVersions = new HashMap<>();
+
+    /** Gives the feed an upcoming version starting on startsOn and expiring on expiresOn. */
+    private FeedVersion upcoming(Feed feed, LocalDate startsOn, LocalDate expiresOn) {
+        FeedVersion upcoming = TestEntities.version(feed.getId() * 100 + 1, feed, FeedVersion.UPCOMING,
+                "feeds/" + feed.getId() + "/up.zip", expiresOn);
+        upcoming.setStartsOn(startsOn);
+        upcomingVersions.put(feed.getId(), upcoming);
+        when(versions.findUpcomingByFeedId()).thenReturn(upcomingVersions);
+        return upcoming;
+    }
+
+    @Test
+    void aDueUpcomingVersionIsPromotedBeforeTheDownloads() throws Exception {
+        Feed feed = feed(1, "Brasov", existingZip().toString(), TODAY.plusYears(1));
+        FeedVersion upcoming = upcoming(feed, TODAY, TODAY.plusYears(1));
+        when(service.promoteUpcoming(1L)).thenReturn(java.util.Optional.of(upcoming));
+
+        List<String> lines = run(feed);
+
+        assertThat(lines).containsExactly("Brasov switched to the version starting " + TODAY, "Brasov is up to date!");
+        InOrder order = inOrder(service, versions);
+        order.verify(service).promoteUpcoming(1L);
+        order.verify(versions).findCurrentByFeedId(); // the download decisions see the promoted version
+    }
+
+    @Test
+    void anUpcomingVersionThatStartedDaysAgoIsPromotedToo() throws Exception {
+        Feed feed = feed(1, "Brasov", existingZip().toString(), TODAY.plusYears(1));
+        FeedVersion upcoming = upcoming(feed, TODAY.minusDays(3), TODAY.plusYears(1));
+        when(service.promoteUpcoming(1L)).thenReturn(java.util.Optional.of(upcoming));
+
+        run(feed);
+
+        verify(service).promoteUpcoming(1L);
+    }
+
+    @Test
+    void anUpcomingVersionThatIsNotDueYetStaysUpcoming() throws Exception {
+        Feed feed = feed(1, "Brasov", existingZip().toString(), TODAY.plusYears(1));
+        upcoming(feed, TODAY.plusDays(1), TODAY.plusYears(1));
+
+        List<String> lines = run(feed);
+
+        assertThat(lines).containsExactly("Brasov is up to date!");
+        verify(service, never()).promoteUpcoming(anyLong());
+    }
+
+    @Test
+    void nothingUpcomingPromotesNothing() throws Exception {
+        List<String> lines = run(feed(1, "Brasov", existingZip().toString(), TODAY.plusYears(1)));
+
+        assertThat(lines).containsExactly("Brasov is up to date!");
+        verify(service, never()).promoteUpcoming(anyLong());
+    }
+
+    @Test
+    void aFailingPromotionIsReportedAndTheOtherFeedsStillRun() throws Exception {
+        Feed a = feed(1, "A", existingZip().toString(), TODAY.plusYears(1));
+        Feed b = feed(2, "B", existingZip().toString(), TODAY.plusYears(1));
+        upcoming(a, TODAY, null);
+        FeedVersion bUpcoming = upcoming(b, TODAY, null);
+        when(service.promoteUpcoming(1L)).thenThrow(new IllegalStateException("db down"));
+        when(service.promoteUpcoming(2L)).thenReturn(java.util.Optional.of(bUpcoming));
+
+        List<String> lines = run(a, b);
+
+        assertThat(lines).contains("A failed to switch, db down", "B switched to the version starting " + TODAY);
+    }
+
+    @Test
+    void promotionAlsoRunsAtStartup() throws Exception {
+        Feed feed = feed(1, "Brasov", existingZip().toString(), TODAY.plusYears(1));
+        FeedVersion upcoming = upcoming(feed, TODAY, null);
+        when(repo.findAll()).thenReturn(List.of(feed));
+        when(service.promoteUpcoming(1L)).thenReturn(java.util.Optional.of(upcoming));
+
+        job.promoteOnStartup();
+
+        verify(service).promoteUpcoming(1L);
+        verify(service, never()).download(anyLong()); // startup only switches, it doesn't download
+    }
+
+    @Test
+    void aFailingStartupPromotionNeverStopsTheApp() {
+        when(repo.findAll()).thenThrow(new IllegalStateException("db not ready"));
+
+        org.assertj.core.api.Assertions.assertThatCode(job::promoteOnStartup).doesNotThrowAnyException();
+    }
+
+    @Test
+    void expiringIsJudgedOnTheUpcomingVersion() throws Exception {
+        // the current file expires tomorrow, but the upcoming one covers the next months: nothing to fetch
+        Feed feed = feed(1, "Brasov", existingZip().toString(), TODAY.plusDays(1));
+        upcoming(feed, TODAY.plusDays(1), TODAY.plusMonths(3));
+
+        List<String> lines = run(feed);
+
+        assertThat(lines).containsExactly("Brasov is up to date!");
+        verify(service, never()).download(anyLong());
+    }
+
+    @Test
+    void anUpcomingVersionThatExpiresSoonIsDownloadedAgain() throws Exception {
+        Feed feed = feed(1, "Brasov", existingZip().toString(), TODAY.plusYears(1));
+        upcoming(feed, TODAY.plusDays(2), TODAY.plusDays(5));
+
+        run(feed);
+
+        verify(service).download(1L);
+    }
+
+    @Test
+    void aDownloadThatBecomesUpcomingSaysWhenItStarts() throws Exception {
+        Feed feed = feed(1, "Brasov", existingZip().toString(), TODAY.plusDays(2));
+        FeedVersion upcoming = TestEntities.version(9, feed, FeedVersion.UPCOMING, "feeds/1/new.zip", null);
+        upcoming.setStartsOn(LocalDate.of(2026, 11, 1));
+        when(service.download(1L)).thenReturn(new DownloadResult(upcoming, false));
+
+        List<String> lines = run(feed);
+
+        assertThat(lines).containsExactly("Brasov has a new version starting 2026-11-01");
+    }
+
+    // ---- cleanup sweep and "checked recently" ----
+
+    @Test
+    void theJobSweepsOrphanFilesBeforeAnythingElse() throws Exception {
+        run(feed(1, "Brasov", existingZip().toString(), TODAY.plusYears(1)));
+
+        InOrder order = inOrder(service, repo);
+        order.verify(service).sweepOrphanFiles();
+        order.verify(repo).findAll();
+    }
+
+    @Test
+    void startupSweepsToo() {
+        when(repo.findAll()).thenReturn(List.of());
+
+        job.promoteOnStartup();
+
+        verify(service).sweepOrphanFiles();
+    }
+
+    /** An expiring feed whose source sent the same file again at checkedAt. */
+    private Feed checkedFeed(java.time.Instant checkedAt) throws IOException {
+        Feed feed = feed(1, "Brasov", existingZip().toString(), TODAY.plusDays(2));
+        currentVersions.get(1L).setCheckedAt(checkedAt);
+        return feed;
+    }
+
+    @Test
+    void anExpiringFeedCheckedLessThan24HoursAgoIsSkipped() throws Exception {
+        // TestEntities.CLOCK is 2026-10-10 09:00 UTC = 12:00 in Bucharest; checked 2 hours earlier
+        List<String> lines = run(checkedFeed(TestEntities.CLOCK.instant().minus(java.time.Duration.ofHours(2))));
+
+        assertThat(lines).containsExactly("Brasov unchanged at the source, checked 2026-10-10 10:00");
+        verify(service, never()).download(anyLong());
+    }
+
+    @Test
+    void anExpiringFeedCheckedMoreThan24HoursAgoIsDownloadedAgain() throws Exception {
+        run(checkedFeed(TestEntities.CLOCK.instant().minus(java.time.Duration.ofHours(25))));
+
+        verify(service).download(1L);
+    }
+
+    @Test
+    void aCheckOnTheUpcomingVersionCountsToo() throws Exception {
+        Feed feed = feed(1, "Brasov", existingZip().toString(), TODAY.plusDays(1));
+        FeedVersion upcoming = upcoming(feed, TODAY.plusDays(1), TODAY.plusDays(3)); // expiring too
+        upcoming.setCheckedAt(TestEntities.CLOCK.instant().minus(java.time.Duration.ofHours(1)));
+
+        List<String> lines = run(feed);
+
+        assertThat(lines).containsExactly("Brasov unchanged at the source, checked 2026-10-10 11:00");
+        verify(service, never()).download(anyLong());
+    }
+
+    @Test
+    void aMissingFileIsDownloadedEvenWhenCheckedRecently() throws Exception {
+        Feed feed = feed(1, "Brasov", "/definitely/not/here.zip", TODAY.plusDays(2));
+        currentVersions.get(1L).setCheckedAt(TestEntities.CLOCK.instant().minus(java.time.Duration.ofHours(1)));
+
+        run(feed);
+
+        verify(service).download(1L);
     }
 }

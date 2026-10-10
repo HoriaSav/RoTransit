@@ -76,7 +76,7 @@ import static org.mockito.Mockito.when;
  * The repositories are mocks, but FeedVersionService is the real one, so the tests see the real
  * "demote the current version, then save the new one" calls (the database side is in FeedVersionSwitchTest).
  * <p>
- * FEEDS_ROOT is the relative path "feeds", so the test uses ids 990001..990030 inside ./feeds (files and feeds/{id}/
+ * FEEDS_ROOT is the relative path "feeds", so the test uses ids 990001..990040 inside ./feeds (files and feeds/{id}/
  * folders) and deletes them afterwards.
  */
 class FeedServiceDownloadTest {
@@ -84,7 +84,7 @@ class FeedServiceDownloadTest {
     private static final String HOST = "files.mobilitydatabase.org";
     /** A small but real zip: download() rejects bodies that are not a readable zip. It has no agency.txt. */
     private static final byte[] ZIP_BYTES = zip("stops.txt", "stop_id,stop_name\n1,FeedServiceDownloadTest\n");
-    private static final List<Long> IDS = java.util.stream.LongStream.rangeClosed(990001L, 990030L).boxed().toList();
+    private static final List<Long> IDS = java.util.stream.LongStream.rangeClosed(990001L, 990040L).boxed().toList();
     /** A real zip: feed_info.txt feed_end_date 2028-05-31 wins over calendar.txt end_date 2029-12-31. */
     private static final byte[] DATED_ZIP = zip(
             "feed_info.txt", "feed_publisher_name,feed_publisher_url,feed_lang,feed_end_date\nP,https://x,ro,20280531\n",
@@ -260,7 +260,8 @@ class FeedServiceDownloadTest {
         connectTargets.clear();
         requestedPaths.clear();
         // FeedService builds its HttpClient at construction, after the defaults above are installed
-        service = new FeedService(feeds, cities, sources, versions, new FeedVersionService(versions, operators));
+        service = new FeedService(feeds, cities, sources, versions, new FeedVersionService(versions, operators),
+                TestEntities.CLOCK);
         when(versions.save(any(FeedVersion.class))).thenAnswer(inv -> inv.getArgument(0));
         when(operators.saveAll(anyList())).thenAnswer(inv -> inv.getArgument(0));
     }
@@ -578,6 +579,30 @@ class FeedServiceDownloadTest {
         verify(operators, never()).saveAll(anyList());
         verify(versions, never()).findByFeedIdAndStatusInOrderByIdDesc(anyLong(), any());
         assertThat(current.getStatus()).isEqualTo(FeedVersion.CURRENT);
+        // the only write: when the source last sent this file again (one update statement, Clock time)
+        verify(versions).markChecked(current.getId(), TestEntities.CLOCK.instant());
+        assertThat(current.getCheckedAt()).isEqualTo(TestEntities.CLOCK.instant());
+    }
+
+    @Test
+    void aFailureToRecordTheCheckStillReportsUnchanged() throws Exception {
+        previouslyDownloaded(990036L, "mdb-dated");
+        when(versions.markChecked(anyLong(), any())).thenThrow(new DataAccessResourceFailureException("db down"));
+
+        DownloadResult result = service.download(990036L);
+
+        assertThat(result.unchanged()).isTrue();
+        verify(versions, never()).save(any()); // no failed row: the download itself was fine
+    }
+
+    @Test
+    void aNewFileDoesNotSetCheckedAt() throws Exception {
+        previouslyDownloaded(990037L, "mdb-ok");
+
+        FeedVersion result = service.download(990037L).version();
+
+        assertThat(result.getCheckedAt()).isNull();
+        verify(versions, never()).markChecked(anyLong(), any());
     }
 
     @Test
@@ -611,7 +636,8 @@ class FeedServiceDownloadTest {
         order.verify(versions).markCurrentAsOld(990021L);
         order.verify(versions).save(result.version());
         // retention runs after the switch
-        order.verify(versions).findByFeedIdAndStatusInOrderByIdDesc(990021L, List.of(FeedVersion.CURRENT, FeedVersion.OLD));
+        order.verify(versions).findByFeedIdAndStatusInOrderByIdDesc(990021L,
+                List.of(FeedVersion.CURRENT, FeedVersion.UPCOMING, FeedVersion.OLD));
     }
 
     @Test
@@ -767,6 +793,145 @@ class FeedServiceDownloadTest {
         assertThat((boolean) r[1]).isTrue();
         assertThat(r[0]).isSameAs(interrupted);
         assertFailedAndCurrentUntouched(990014L, existing);
+    }
+
+    // ---- upcoming versions: the decision table (spec A3). TestEntities.CLOCK says today is 2026-10-10;
+    //      AGENCY_ZIP starts 2026-11-01, DATED_ZIP 2026-01-01, ZIP_BYTES has no start date ----
+
+    /** The same service, but "today" is the given date in Bucharest. */
+    private FeedService serviceOn(LocalDate today) {
+        java.time.ZoneId zone = java.time.ZoneId.of("Europe/Bucharest");
+        java.time.Clock clock = java.time.Clock.fixed(today.atTime(12, 0).atZone(zone).toInstant(), zone);
+        return new FeedService(feeds, cities, sources, versions, new FeedVersionService(versions, operators), clock);
+    }
+
+    /** A3 row 1, "same sha as current" is sameFileAsTheCurrentVersionIsUnchangedNoNewRowNoFileChangesTempDeleted. */
+    @Test
+    void sameFileAsTheUpcomingVersionIsUnchangedToo() throws Exception {
+        previouslyDownloaded(990026L, "mdb-agency"); // current = DATED_ZIP
+        Path upcomingFile = fileOf(990026L, AGENCY_ZIP);
+        Files.write(upcomingFile, AGENCY_ZIP);
+        FeedVersion upcoming = TestEntities.version(990026_01L, current.getFeed(), FeedVersion.UPCOMING,
+                upcomingFile.toString(), null);
+        upcoming.setSha256(sha256(AGENCY_ZIP));
+        when(versions.findByFeedIdAndStatus(990026L, FeedVersion.UPCOMING)).thenReturn(Optional.of(upcoming));
+
+        DownloadResult result = service.download(990026L);
+
+        assertThat(result.unchanged()).isTrue();
+        assertThat(result.version()).isSameAs(upcoming);
+        verify(versions, never()).save(any());
+        verify(versions, never()).markUpcomingAsOld(anyLong());
+        verify(versions, never()).markCurrentAsOld(anyLong());
+        assertThat(partFiles(990026L)).isEmpty();
+    }
+
+    @Test
+    void noStartDateBecomesCurrentEvenWithACurrentVersion() throws Exception {
+        previouslyDownloaded(990027L, "mdb-ok"); // ZIP_BYTES has no feed_info / calendar
+
+        FeedVersion result = service.download(990027L).version();
+
+        assertThat(result.getStartsOn()).isNull();
+        assertThat(result.getStatus()).isEqualTo(FeedVersion.CURRENT);
+        verify(versions).markCurrentAsOld(990027L);
+        verify(versions, never()).markUpcomingAsOld(anyLong());
+    }
+
+    @Test
+    void startDateInThePastBecomesCurrent() throws Exception {
+        Path previous = previouslyDownloaded(990028L, "mdb-agency"); // on 1 Dec, 1 Nov is in the past
+
+        FeedVersion result = serviceOn(LocalDate.of(2026, 12, 1)).download(990028L).version();
+
+        assertThat(result.getStartsOn()).isEqualTo(LocalDate.of(2026, 11, 1));
+        assertThat(result.getStatus()).isEqualTo(FeedVersion.CURRENT);
+        verify(versions).markCurrentAsOld(990028L);
+        assertThat(previous).exists();
+    }
+
+    @Test
+    void startDateTodayBecomesCurrent() throws Exception {
+        previouslyDownloaded(990029L, "mdb-agency");
+
+        FeedVersion result = serviceOn(LocalDate.of(2026, 11, 1)).download(990029L).version();
+
+        assertThat(result.getStatus()).isEqualTo(FeedVersion.CURRENT);
+        verify(versions).markCurrentAsOld(990029L);
+        verify(versions, never()).markUpcomingAsOld(anyLong());
+    }
+
+    @Test
+    void futureStartWithoutACurrentVersionBecomesCurrentAnyway() throws Exception {
+        feed(990031L, "mdb-agency"); // never downloaded: a future feed beats no feed
+
+        FeedVersion result = service.download(990031L).version();
+
+        assertThat(result.getStartsOn()).isAfter(TestEntities.TODAY);
+        assertThat(result.getStatus()).isEqualTo(FeedVersion.CURRENT);
+        assertThat(fileOf(990031L, AGENCY_ZIP)).hasBinaryContent(AGENCY_ZIP);
+        verify(versions).markCurrentAsOld(990031L);
+    }
+
+    @Test
+    void futureStartWhenTheCurrentFileIsMissingBecomesCurrent() throws Exception {
+        // a current row whose file is gone serves nothing, so it counts as "no current version"
+        FeedSource source = feed(990032L, "mdb-agency");
+        currentVersion(source.getFeed(), fileOf(990032L, DATED_ZIP), DATED_ZIP); // row only, no file
+
+        FeedVersion result = service.download(990032L).version();
+
+        assertThat(result.getStatus()).isEqualTo(FeedVersion.CURRENT);
+    }
+
+    @Test
+    void futureStartWithACurrentVersionBecomesUpcomingAndTheCurrentIsUntouched() throws Exception {
+        Path currentFile = previouslyDownloaded(990033L, "mdb-agency");
+
+        DownloadResult result = service.download(990033L);
+
+        FeedVersion upcoming = result.version();
+        assertThat(result.unchanged()).isFalse();
+        assertThat(upcoming.getStatus()).isEqualTo(FeedVersion.UPCOMING);
+        assertThat(upcoming.getStartsOn()).isEqualTo(LocalDate.of(2026, 11, 1));
+        assertThat(upcoming.getFilePath()).isEqualTo(fileOf(990033L, AGENCY_ZIP).toString());
+        assertThat(fileOf(990033L, AGENCY_ZIP)).hasBinaryContent(AGENCY_ZIP);
+        assertThat(currentFile).as("still served until 1 November").hasBinaryContent(DATED_ZIP);
+        assertThat(current.getStatus()).isEqualTo(FeedVersion.CURRENT);
+        verify(versions, never()).markCurrentAsOld(anyLong());
+        assertThat(savedOperators()).extracting(Operator::getName)
+                .containsExactly("Transport Urban, Sinaia", "Second Operator");
+        assertThat(partFiles(990033L)).isEmpty();
+    }
+
+    @Test
+    void aSecondUpcomingDownloadReplacesTheFirst() throws Exception {
+        previouslyDownloaded(990034L, "mdb-agency");
+        FeedVersion firstUpcoming = TestEntities.version(990034_01L, current.getFeed(), FeedVersion.UPCOMING,
+                fileOf(990034L, NO_DATES_ZIP).toString(), null);
+        firstUpcoming.setSha256("an-older-upcoming-file");
+        when(versions.findByFeedIdAndStatus(990034L, FeedVersion.UPCOMING)).thenReturn(Optional.of(firstUpcoming));
+
+        FeedVersion result = service.download(990034L).version();
+
+        assertThat(result.getStatus()).isEqualTo(FeedVersion.UPCOMING);
+        // demote first: the database allows only one upcoming row per feed (the DB side is in FeedVersionSwitchTest)
+        InOrder order = inOrder(versions);
+        order.verify(versions).markUpcomingAsOld(990034L);
+        order.verify(versions).save(result);
+        verify(versions, never()).markCurrentAsOld(anyLong());
+    }
+
+    @Test
+    void whenSavingAnUpcomingVersionFailsTheMovedFileIsDeletedToo() throws Exception {
+        Path currentFile = previouslyDownloaded(990035L, "mdb-agency");
+        when(versions.markUpcomingAsOld(990035L)).thenThrow(new DataAccessResourceFailureException("db down"));
+
+        assertThatThrownBy(() -> service.download(990035L)).isInstanceOf(DataAccessResourceFailureException.class);
+
+        assertThat(fileOf(990035L, AGENCY_ZIP)).doesNotExist();
+        assertThat(currentFile).exists();
+        assertThat(partFiles(990035L)).isEmpty();
     }
 
     private static byte[] zip(String... nameContentPairs) {

@@ -19,7 +19,7 @@ import java.time.LocalDate;
 @Entity
 public class FeedVersion {
     public static final String CURRENT = "current";
-    public static final String UPCOMING = "upcoming"; // not used yet: promoting future feeds comes in step 3
+    public static final String UPCOMING = "upcoming"; // downloaded, but its timetable only starts later
     public static final String OLD = "old";
     public static final String FAILED = "failed";
 
@@ -42,6 +42,8 @@ public class FeedVersion {
     private LocalDate startsOn;
     private LocalDate expiresOn;
     private Instant downloadedAt;
+    private Instant servedFrom; // null = never was current
+    private Instant checkedAt; // null = the source never sent this file again
     private String status;
 
     public Long getId() {
@@ -95,6 +97,22 @@ public class FeedVersion {
     }
     public void setDownloadedAt(Instant downloadedAt) {
         this.downloadedAt = downloadedAt;
+    }
+
+    public Instant getServedFrom() {
+        return servedFrom;
+    }
+
+    public void setServedFrom(Instant servedFrom) {
+        this.servedFrom = servedFrom;
+    }
+
+    public Instant getCheckedAt() {
+        return checkedAt;
+    }
+
+    public void setCheckedAt(Instant checkedAt) {
+        this.checkedAt = checkedAt;
     }
 
     public String getStatus() {

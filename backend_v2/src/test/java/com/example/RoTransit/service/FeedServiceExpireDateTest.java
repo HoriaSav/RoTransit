@@ -44,7 +44,8 @@ class FeedServiceExpireDateTest {
     private final FeedRepository repo = mock(FeedRepository.class);
     private final FeedVersionRepository versions = mock(FeedVersionRepository.class);
     private final FeedService service = new FeedService(repo, mock(CityRepository.class),
-            mock(FeedSourceRepository.class), versions, mock(FeedVersionService.class));
+            mock(FeedSourceRepository.class), versions, mock(FeedVersionService.class),
+            TestEntities.CLOCK);
 
     @TempDir
     Path tmp;

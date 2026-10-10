@@ -148,7 +148,8 @@ class SecurityConfigTest {
 
     @ParameterizedTest(name = "{0} {1}")
     @CsvSource({"GET, /admin/feeds", "GET, /admin/feeds/1", "GET, /admin/feeds/1/expires",
-            "POST, /admin/feeds/update", "POST, /admin/feeds", "POST, /admin/feeds/1/download"})
+            "POST, /admin/feeds/update", "POST, /admin/feeds", "POST, /admin/feeds/1/download",
+            "POST, /admin/feeds/1/promote"})
     void adminRoutesWithoutValidCredentialsAre401WithBasicChallengeAndDoNothing(String method, String path) throws Exception {
         for (String auth : new String[]{null, basic(adminUser, "wrong-" + adminPassword), basic("nobody", adminPassword), "Bearer abc"}) {
             HttpResponse<byte[]> r = call(method, path, auth);
@@ -290,7 +291,8 @@ class SecurityConfigTest {
         HttpResponse<byte[]> list = call("GET", "/api/feeds", null);
         assertThat(list.statusCode()).isEqualTo(200);
         assertThat(body(list)).isEqualTo(
-                "[{\"id\":1,\"cityName\":\"Testville\",\"companyName\":\"TestCo\",\"operators\":[\"Test Operator\"]}]");
+                "[{\"id\":1,\"cityName\":\"Testville\",\"companyName\":\"TestCo\",\"operators\":[\"Test Operator\"],"
+                        + "\"current\":null,\"upcoming\":null}]");
         ArgumentCaptor<Sort> sort = ArgumentCaptor.forClass(Sort.class);
         verify(repo).findAll(sort.capture());
         assertThat(sort.getValue()).isEqualTo(Sort.by("id"));
@@ -300,6 +302,10 @@ class SecurityConfigTest {
         assertThat(file.statusCode()).isEqualTo(200);
         assertThat(file.body()).isEqualTo(bytes);
         assertThat(file.headers().firstValue("WWW-Authenticate")).isEmpty();
+        // the upcoming file is public too: no login asked, just 404 because there is none
+        HttpResponse<byte[]> upcoming = call("GET", "/api/feeds/3/file/upcoming", null);
+        assertThat(upcoming.statusCode()).isEqualTo(404);
+        assertThat(upcoming.headers().firstValue("WWW-Authenticate")).isEmpty();
 
         // correct admin credentials on a public route are fine too
         assertThat(call("GET", "/api/feeds", admin()).statusCode()).isEqualTo(200);

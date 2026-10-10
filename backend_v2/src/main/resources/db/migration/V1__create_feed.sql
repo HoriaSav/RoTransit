@@ -26,9 +26,11 @@ create TABLE feed_source(
 );
 
 -- One row per download attempt. A successful one has a file and becomes 'current' (the previous current
--- becomes 'old'); a failed one is stored as 'failed' with no file, so it never replaces the current version.
--- file_path is empty for failed attempts and for old versions whose file was deleted (retention keeps only the
--- current file plus one old one).
+-- becomes 'old'), or 'upcoming' when its timetable only starts in the future: it waits there and becomes current
+-- on its start date. A failed one is stored as 'failed' with no file, so it never replaces the current version
+-- (only the newest 5 failed rows per feed are kept).
+-- file_path is empty for failed attempts and for old versions whose file was deleted (retention keeps the
+-- current and upcoming files plus the most recently served old one).
 -- sha256 is NOT unique per feed on purpose: a feed can go back to an older file (version A, then B, then A again),
 -- and that needs two rows with the same sha256. The same file on disk is shared by both rows.
 create TABLE feed_version(
@@ -40,11 +42,19 @@ create TABLE feed_version(
     starts_on DATE,
     expires_on DATE,
     downloaded_at TIMESTAMPTZ NOT NULL,
+    -- when this version started being served (became current); empty if it never was, e.g. an upcoming version
+    -- that a newer one replaced. Retention keeps the file of the most recently served old version.
+    served_from TIMESTAMPTZ,
+    -- last time the source sent exactly this file again (an "unchanged" download); the nightly job skips a feed
+    -- checked less than 24 hours ago instead of downloading the same file every night
+    checked_at TIMESTAMPTZ,
     status VARCHAR(20) NOT NULL CHECK (status IN ('current', 'upcoming', 'old', 'failed'))
 );
 CREATE INDEX feed_version_feed_id_idx ON feed_version(feed_id);
 -- safety net: the database itself refuses a second 'current' version for the same feed
 CREATE UNIQUE INDEX feed_version_one_current_per_feed ON feed_version(feed_id) WHERE status = 'current';
+-- the same for upcoming: at most one version waiting per feed
+CREATE UNIQUE INDEX feed_version_one_upcoming_per_feed ON feed_version(feed_id) WHERE status = 'upcoming';
 
 -- The transit operators (agency.txt rows) inside one downloaded version.
 -- TEXT because these values come from outside files and can be longer than we would guess.

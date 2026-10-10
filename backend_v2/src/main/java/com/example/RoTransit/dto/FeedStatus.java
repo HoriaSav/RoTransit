@@ -8,17 +8,22 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 
 public record FeedStatus(Long id, String cityName, String companyName, String status, Instant downloadedAt,
-                         LocalDate expiresOn, Long daysLeft) {
+                         LocalDate expiresOn, Long daysLeft, LocalDate upcomingStartsOn) {
 
-    /** current: the version we serve (or null); latest: the newest attempt, successful or failed (or null). */
-    public static FeedStatus from(Feed feed, FeedVersion current, FeedVersion latest) {
+    /**
+     * current: the version we serve (or null); latest: the newest attempt, successful or failed (or null);
+     * upcoming: the version waiting for its start date (or null). today comes from the app's Clock (Bucharest),
+     * not the server's zone.
+     */
+    public static FeedStatus from(Feed feed, FeedVersion current, FeedVersion latest, FeedVersion upcoming,
+                                  LocalDate today) {
         Instant downloadedAt = current == null ? null : current.getDownloadedAt();
         LocalDate expiresOn = current == null ? null : current.getExpiresOn();
         Long daysLeft = expiresOn == null
                 ?null
-                : ChronoUnit.DAYS.between(LocalDate.now(), expiresOn);
+                : ChronoUnit.DAYS.between(today, expiresOn);
         return new FeedStatus(feed.getId(), feed.getCityName(), feed.getName(), statusOf(current, latest),
-                downloadedAt, expiresOn, daysLeft);
+                downloadedAt, expiresOn, daysLeft, upcoming == null ? null : upcoming.getStartsOn());
     }
 
     /**

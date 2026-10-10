@@ -38,12 +38,18 @@ import java.nio.file.StandardCopyOption;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.nio.file.LinkOption;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Optional;
+import java.util.stream.Stream;
+import java.util.Set;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
@@ -72,18 +78,20 @@ public class FeedService {
     private final FeedSourceRepository sources;
     private final FeedVersionRepository versions;
     private final FeedVersionService versionService;
+    private final Clock clock;
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
     public FeedService(FeedRepository feeds, CityRepository cities, FeedSourceRepository sources,
-                       FeedVersionRepository versions, FeedVersionService versionService) {
+                       FeedVersionRepository versions, FeedVersionService versionService, Clock clock) {
         this.feeds = feeds;
         this.cities = cities;
         this.sources = sources;
         this.versions = versions;
         this.versionService = versionService;
+        this.clock = clock;
     }
 
     /** Creates the city (only if it doesn't exist yet), the feed and its priority-1 source: all three or none. */
@@ -111,8 +119,10 @@ public class FeedService {
     }
 
     /**
-     * Downloads the feed from its priority-1 source. A new file becomes the current version, stored as
-     * feeds/{feedId}/{sha256}.zip; the same file as the current one is reported as unchanged and nothing is saved.
+     * Downloads the feed from its priority-1 source and stores a new file as feeds/{feedId}/{sha256}.zip.
+     * The same file as the current or upcoming one is reported as unchanged and nothing is saved.
+     * A new file becomes "upcoming" when its timetable starts after today and we have a current version to serve
+     * until then; otherwise it becomes "current" right away.
      * Any failure is stored as a "failed" version and rethrown; the current version and its file stay as they were.
      */
     public DownloadResult download(Long id) throws IOException, InterruptedException {
@@ -123,6 +133,7 @@ public class FeedService {
         FeedVersion version = new FeedVersion();
         List<Operator> operators;
         Path file;
+        boolean upcoming;
 
         Path temp = null;
         try {
@@ -140,9 +151,6 @@ public class FeedService {
                 throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
                         "source returned " + response.statusCode() + " for " + sourceUrl);
             }
-            // TODO (step 3): a new feed may only start service in the future (e.g. a timetable change next week).
-            // starts_on is stored now; when it is after today, keep serving the current version, store this one as
-            // "upcoming" and let FeedUpdateJob promote it on that date.
             try (ZipFile check = new ZipFile(temp.toFile())) {} // throws if its not a valid zip
             catch (ZipException e) {
                 throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
@@ -151,10 +159,14 @@ public class FeedService {
 
             String sha256 = sha256(temp);
             FeedVersion current = versions.findByFeedIdAndStatus(id, FeedVersion.CURRENT).orElse(null);
-            if (current != null && sha256.equals(current.getSha256()) && hasFile(current)) {
-                // the source has nothing new: keep everything as it is (finally deletes the temp file)
-                log.info("Feed {} is unchanged, the source sent the same file again", id);
-                return new DownloadResult(current, true);
+            FeedVersion waiting = versions.findByFeedIdAndStatus(id, FeedVersion.UPCOMING).orElse(null);
+            for (FeedVersion known : new FeedVersion[] {current, waiting}) {
+                if (known != null && sha256.equals(known.getSha256()) && hasFile(known)) {
+                    // the source has nothing new: keep everything as it is (finally deletes the temp file)
+                    log.info("Feed {} is unchanged, the source sent the same file again", id);
+                    markChecked(known);
+                    return new DownloadResult(known, true);
+                }
             }
 
             // read what we store about the new file before moving it
@@ -167,6 +179,11 @@ public class FeedService {
             }
             version.setStartsOn(readStartDate(temp));
             operators = readOperators(temp);
+            // a timetable that starts later waits as "upcoming", but only if we have something to serve meanwhile:
+            // a future feed is better than no feed at all
+            LocalDate today = LocalDate.now(clock);
+            upcoming = version.getStartsOn() != null && version.getStartsOn().isAfter(today) && current != null
+                    && hasFile(current);
 
             // named after the content, not the version id: the id only exists after the row is saved,
             // and we want the file in place before the row says it is there
@@ -195,7 +212,9 @@ public class FeedService {
         version.setDownloadedAt(Instant.now());
         FeedVersion saved;
         try {
-            saved = versionService.saveAsCurrent(version, operators);
+            saved = upcoming
+                    ? versionService.saveAsUpcoming(version, operators)
+                    : versionService.saveAsCurrent(version, operators);
         }
         catch (RuntimeException e) {
             // the transaction was rolled back, so no row points at the file we just moved: remove it so disk and
@@ -211,6 +230,87 @@ public class FeedService {
         }
         deleteOldFiles(id);
         return new DownloadResult(saved, false);
+    }
+
+    /** Remembers when the source last sent this file again, so the nightly job can skip it for a day. */
+    private void markChecked(FeedVersion version) {
+        Instant now = clock.instant();
+        try {
+            versions.markChecked(version.getId(), now);
+            version.setCheckedAt(now);
+        }
+        catch (RuntimeException e) {
+            // only an optimisation: the worst case is downloading the same file again tomorrow
+            log.warn("Could not record the check of feed version {}", version.getId(), e);
+        }
+    }
+
+    /**
+     * How old a file must be before the sweep may delete it. A download in progress has a young .part file, and for a
+     * moment after the move a young zip that no row points at yet; an hour is far longer than any download.
+     */
+    static final Duration SWEEP_MIN_AGE = Duration.ofHours(1);
+
+    /**
+     * Deletes leftovers of crashed downloads: .part temp files (they are created directly in feeds/) and zips in
+     * feeds/{feedId}/ that no feed_version row points at. Only files older than SWEEP_MIN_AGE. Symlinks are never
+     * followed or touched, so nothing outside feeds/ can be reached. Problems are only logged.
+     */
+    public void sweepOrphanFiles() {
+        try {
+            if (!Files.isDirectory(FEEDS_ROOT, LinkOption.NOFOLLOW_LINKS)) {
+                return; // nothing downloaded yet
+            }
+            // compared as absolute paths, so "feeds/1/a.zip" and "/.../feeds/1/a.zip" count as the same file
+            Set<Path> referenced = new HashSet<>();
+            for (String filePath : versions.findAllFilePaths()) {
+                referenced.add(Path.of(filePath).toAbsolutePath().normalize());
+            }
+            Instant cutoff = clock.instant().minus(SWEEP_MIN_AGE);
+            for (Path path : list(FEEDS_ROOT)) {
+                if (isPart(path)) {
+                    deleteIfOlder(path, cutoff, "stale temp file");
+                }
+                else if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)
+                        && path.getFileName().toString().matches("\\d+")) { // feeds/{feedId}/
+                    for (Path file : list(path)) {
+                        if (isPart(file)) {
+                            deleteIfOlder(file, cutoff, "stale temp file");
+                        }
+                        else if (Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)
+                                && !referenced.contains(file.toAbsolutePath().normalize())) {
+                            deleteIfOlder(file, cutoff, "orphan file");
+                        }
+                    }
+                }
+            }
+        }
+        catch (IOException | RuntimeException e) {
+            log.warn("Sweeping orphan files in {} failed", FEEDS_ROOT, e);
+        }
+    }
+
+    private static List<Path> list(Path dir) throws IOException {
+        try (Stream<Path> paths = Files.list(dir)) {
+            return paths.toList();
+        }
+    }
+
+    /** A regular .part file (a symlink with that name is left alone). */
+    private static boolean isPart(Path path) {
+        return path.getFileName().toString().endsWith(".part") && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS);
+    }
+
+    private static void deleteIfOlder(Path file, Instant cutoff, String what) {
+        try {
+            if (Files.getLastModifiedTime(file, LinkOption.NOFOLLOW_LINKS).toInstant().isBefore(cutoff)) {
+                Files.delete(file);
+                log.info("Sweep deleted {} {}", what, file);
+            }
+        }
+        catch (IOException | RuntimeException e) {
+            log.warn("Sweep could not delete {}", file, e); // the next sweep tries again
+        }
     }
 
     private static boolean hasFile(FeedVersion version) {
@@ -230,21 +330,46 @@ public class FeedService {
         }
     }
 
-    /** How many successful versions keep their file: the current one plus one old one to go back to. */
-    static final int VERSIONS_WITH_FILES = 2;
+    /**
+     * Makes the feed's upcoming version current now (used on its start date, or by an admin who doesn't want to wait),
+     * then cleans up files the switch made unnecessary. Empty if there is no upcoming version.
+     */
+    public Optional<FeedVersion> promoteUpcoming(Long feedId) {
+        Optional<FeedVersion> promoted = versionService.promoteUpcoming(feedId);
+        if (promoted.isPresent()) {
+            log.info("Feed {} switched to the version starting {}", feedId, promoted.get().getStartsOn());
+            deleteOldFiles(feedId);
+        }
+        return promoted;
+    }
 
     /**
-     * Retention: deletes the files of successful versions older than the newest VERSIONS_WITH_FILES and clears their
-     * file_path. The rows stay as history. Problems are only logged: cleaning up must never fail a download.
+     * Retention: keeps the files of the current and upcoming versions and of the most recently served old one (the
+     * version to go back to). Every other file is deleted and its file_path cleared; the rows stay as history.
+     * An old version that was never served (an upcoming one replaced by a newer upcoming) gets no slot.
+     * Problems are only logged: cleaning up must never fail a download.
      */
     void deleteOldFiles(Long feedId) {
         try {
             List<FeedVersion> successful = versions.findByFeedIdAndStatusInOrderByIdDesc(feedId,
-                    List.of(FeedVersion.CURRENT, FeedVersion.OLD));
-            List<FeedVersion> kept = successful.subList(0, Math.min(VERSIONS_WITH_FILES, successful.size()));
+                    List.of(FeedVersion.CURRENT, FeedVersion.UPCOMING, FeedVersion.OLD));
+            FeedVersion lastServedOld = successful.stream()
+                    .filter(v -> FeedVersion.OLD.equals(v.getStatus()) && v.getServedFrom() != null)
+                    .max(java.util.Comparator.comparing(FeedVersion::getServedFrom))
+                    .orElse(null);
+            List<FeedVersion> kept = new ArrayList<>();
+            List<FeedVersion> toClean = new ArrayList<>();
+            for (FeedVersion v : successful) {
+                if (!FeedVersion.OLD.equals(v.getStatus()) || v == lastServedOld) {
+                    kept.add(v);
+                }
+                else {
+                    toClean.add(v);
+                }
+            }
             List<String> keptPaths = kept.stream().map(FeedVersion::getFilePath).toList();
 
-            for (FeedVersion old : successful.subList(kept.size(), successful.size())) {
+            for (FeedVersion old : toClean) {
                 String path = old.getFilePath();
                 if (path == null) {
                     continue; // cleaned up before

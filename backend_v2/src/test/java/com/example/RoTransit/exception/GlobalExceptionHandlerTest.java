@@ -57,10 +57,11 @@ class GlobalExceptionHandlerTest {
     @BeforeEach
     void setUp() {
         when(repo.findById(anyLong())).thenReturn(Optional.empty());
-        FeedService realService = new FeedService(repo, mock(CityRepository.class), sources, versions, versionService);
+        FeedService realService = new FeedService(repo, mock(CityRepository.class), sources, versions, versionService,
+                TestEntities.CLOCK);
         mvc = MockMvcBuilders
                 .standaloneSetup(new FeedController(repo, versions, mock(OperatorRepository.class)),
-                        new AdminController(repo, sources, versions, realService, mock(FeedUpdateJob.class)))
+                        new AdminController(repo, sources, versions, realService, mock(FeedUpdateJob.class), TestEntities.CLOCK))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -105,7 +106,7 @@ class GlobalExceptionHandlerTest {
         FeedService service = mock(FeedService.class);
         when(service.download(5L)).thenThrow(new ResponseStatusException(HttpStatus.BAD_GATEWAY, "source returned 403"));
         MockMvc mvc502 = MockMvcBuilders
-                .standaloneSetup(new AdminController(repo, sources, versions, service, mock(FeedUpdateJob.class)))
+                .standaloneSetup(new AdminController(repo, sources, versions, service, mock(FeedUpdateJob.class), TestEntities.CLOCK))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
 
@@ -121,7 +122,7 @@ class GlobalExceptionHandlerTest {
                 "source sent an invalid zip for https://files.mobilitydatabase.org/mdb-x/latest.zip",
                 new java.util.zip.ZipException("zip END header not found")));
         MockMvc mvc502 = MockMvcBuilders
-                .standaloneSetup(new AdminController(repo, sources, versions, service, mock(FeedUpdateJob.class)))
+                .standaloneSetup(new AdminController(repo, sources, versions, service, mock(FeedUpdateJob.class), TestEntities.CLOCK))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
 
@@ -137,7 +138,7 @@ class GlobalExceptionHandlerTest {
         FeedService service = mock(FeedService.class);
         when(service.getExpireDate(5L)).thenThrow(new IllegalStateException("feed_info.txt is missing"));
         MockMvc mvcIse = MockMvcBuilders
-                .standaloneSetup(new AdminController(repo, sources, versions, service, mock(FeedUpdateJob.class)))
+                .standaloneSetup(new AdminController(repo, sources, versions, service, mock(FeedUpdateJob.class), TestEntities.CLOCK))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
 
@@ -201,7 +202,7 @@ class GlobalExceptionHandlerTest {
         FeedService service = mock(FeedService.class);
         when(service.download(5L)).thenThrow(new ResponseStatusException(HttpStatus.BAD_GATEWAY, "source returned 403 for https://files.mobilitydatabase.org/mdb-x/latest.zip"));
         MockMvc mvc502 = MockMvcBuilders
-                .standaloneSetup(new AdminController(repo, sources, versions, service, mock(FeedUpdateJob.class)))
+                .standaloneSetup(new AdminController(repo, sources, versions, service, mock(FeedUpdateJob.class), TestEntities.CLOCK))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
 

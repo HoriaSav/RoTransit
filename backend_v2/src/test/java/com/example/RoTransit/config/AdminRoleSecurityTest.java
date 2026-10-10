@@ -70,6 +70,8 @@ class AdminRoleSecurityTest {
 
     @BeforeEach
     void setUp() {
+        // the app's startup promotion (ApplicationReadyEvent) already called the mocked job once; not part of the test
+        org.mockito.Mockito.clearInvocations(feedUpdateJob);
         when(repo.findAll()).thenReturn(List.of());
         mvc = MockMvcBuilders.webAppContextSetup(context)
                 .addFilters(context.getBean("springSecurityFilterChain", Filter.class))
@@ -84,6 +86,7 @@ class AdminRoleSecurityTest {
             "POST, /admin/feeds/update,     403",
             "POST, /admin/feeds,            403",
             "POST, /admin/feeds/1/download, 403",
+            "POST, /admin/feeds/1/promote,  403",
             "GET,  /api/feeds,              200",
             "GET,  /foo,                    403"
     })
@@ -96,6 +99,10 @@ class AdminRoleSecurityTest {
                         .content("{\"cityName\":\"RoleProbe\",\"companyName\":\"X\",\"sourceId\":\"mdb-role\"}"))
                 .andExpect(status().is(expected));
 
-        verifyNoInteractions(feedService, feedUpdateJob, sources, versions);
+        verifyNoInteractions(feedService, feedUpdateJob, sources);
+        // the public list reads the current/upcoming versions; nothing may write them
+        org.mockito.Mockito.verify(versions, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(versions, org.mockito.Mockito.never()).markCurrentAsOld(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(versions, org.mockito.Mockito.never()).markUpcomingAsOld(org.mockito.ArgumentMatchers.any());
     }
 }

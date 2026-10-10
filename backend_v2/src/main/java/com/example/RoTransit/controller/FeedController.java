@@ -40,21 +40,34 @@ public class FeedController {
 
     @GetMapping
     public List<FeedSummary> getPublicFeedList() {
-        // two queries in total (feeds with their cities, then all operator names), not one per feed
+        // four queries in total (feeds with their cities, operator names, current and upcoming versions),
+        // not one per feed
         Map<Long, List<String>> operatorNames = operators.findCurrentOperatorNames().stream()
                 .collect(Collectors.groupingBy(FeedOperator::feedId,
                         Collectors.mapping(FeedOperator::name, Collectors.toList())));
+        Map<Long, FeedVersion> current = versions.findCurrentByFeedId();
+        Map<Long, FeedVersion> upcoming = versions.findUpcomingByFeedId();
         return feeds.findAll(Sort.by("id")).stream()
-                .map(feed -> FeedSummary.from(feed, operatorNames.getOrDefault(feed.getId(), List.of())))
+                .map(feed -> FeedSummary.from(feed, operatorNames.getOrDefault(feed.getId(), List.of()),
+                        current.get(feed.getId()), upcoming.get(feed.getId())))
                 .toList();
     }
 
     @GetMapping("/{id}/file")
     public ResponseEntity<Resource> getFeedFile(@PathVariable Long id) throws IOException {
+        return serve(id, FeedVersion.CURRENT, id + ".zip");
+    }
+
+    /** The file that becomes current on its start date, so the app can switch offline. 404 if there is none. */
+    @GetMapping("/{id}/file/upcoming")
+    public ResponseEntity<Resource> getUpcomingFeedFile(@PathVariable Long id) throws IOException {
+        return serve(id, FeedVersion.UPCOMING, id + "-upcoming.zip");
+    }
+
+    private ResponseEntity<Resource> serve(Long id, String status, String fileName) throws IOException {
         feeds.findById(id).orElseThrow(); // unknown id -> 404 "Feed not found"
-        String filePath = versions.findByFeedIdAndStatus(id, FeedVersion.CURRENT)
-                .map(FeedVersion::getFilePath)
-                .orElse(null);
+        FeedVersion version = versions.findByFeedIdAndStatus(id, status).orElse(null);
+        String filePath = version == null ? null : version.getFilePath();
         if (filePath == null || filePath.isBlank()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         }
@@ -66,11 +79,15 @@ public class FeedController {
         if (!file.toRealPath().startsWith(FeedService.FEEDS_ROOT.toRealPath())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         }
-        // the file on disk is named after its sha256; clients keep getting the simple name they always got
-        String fileName = id + ".zip";
-        return ResponseEntity.ok()
+        // the file on disk is named after its sha256; clients get a simple name
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("application/zip"))
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
-                .body(new FileSystemResource(file));
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"");
+        if (version.getSha256() != null) {
+            // ETag = the file's sha256 (the same value /api/feeds shows). When the request's If-None-Match has the
+            // same value, Spring answers 304 Not Modified with no body by itself: the client already has this file.
+            response.eTag(version.getSha256());
+        }
+        return response.body(new FileSystemResource(file));
     }
 }

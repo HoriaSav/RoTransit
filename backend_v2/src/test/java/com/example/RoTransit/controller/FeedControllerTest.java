@@ -43,7 +43,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Standalone MockMvc tests for the public FeedController (/api/feeds, /api/feeds/{id}/file).
+ * Standalone MockMvc tests for the public FeedController (/api/feeds, /api/feeds/{id}/file, .../file/upcoming).
  * No Spring context, no DB, no network. The admin routes are covered by AdminControllerTest.
  * Note: the "valid zip" test writes one uniquely named file into FeedService.FEEDS_ROOT (./feeds) and deletes it afterwards.
  */
@@ -183,11 +183,13 @@ class FeedControllerTest {
         mvc.perform(get("/api/feeds"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
-                .andExpect(jsonPath("$[0]", aMapWithSize(4)))
+                .andExpect(jsonPath("$[0]", aMapWithSize(6)))
                 .andExpect(jsonPath("$[0].id").value(7))
                 .andExpect(jsonPath("$[0].cityName").value("Testville"))
                 .andExpect(jsonPath("$[0].companyName").value("TestCo"))
                 .andExpect(jsonPath("$[0].operators", hasSize(0)))
+                .andExpect(jsonPath("$[0].current").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$[0].upcoming").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$[0].localPath").doesNotExist());
     }
 
@@ -262,5 +264,128 @@ class FeedControllerTest {
                 .andExpect(status().isNotFound())
                 .andExpect(header().doesNotExist(HttpHeaders.CONTENT_DISPOSITION))
                 .andExpect(content().string(""));
+    }
+
+    // ---- upcoming versions and ETag ----
+
+    /** A real file in feeds/{id}/ for a version with the given status and sha256; returns the version. */
+    private FeedVersion versionFile(long id, String status, String sha256) throws IOException {
+        Feed feed = feed(id);
+        createdDir = FeedService.FEEDS_ROOT.resolve(String.valueOf(id));
+        Files.createDirectories(createdDir);
+        createdFile = Files.writeString(createdDir.resolve(sha256 + ".zip"), status + " bytes");
+        FeedVersion version = TestEntities.version(id * 10, feed, status, createdFile.toString(), null);
+        version.setSha256(sha256);
+        when(repo.findById(id)).thenReturn(Optional.of(feed));
+        when(versions.findByFeedIdAndStatus(id, status)).thenReturn(Optional.of(version));
+        return version;
+    }
+
+    @Test
+    void feedListShowsCurrentAndUpcomingVersionInfoFromTwoQueries() throws Exception {
+        Feed withBoth = feed(3L), withCurrentOnly = feed(4L);
+        FeedVersion current = TestEntities.current(withBoth, "feeds/3/aaa.zip", java.time.LocalDate.of(2026, 12, 31));
+        current.setSha256("aaa");
+        current.setStartsOn(java.time.LocalDate.of(2026, 9, 1));
+        FeedVersion upcoming = TestEntities.version(301, withBoth, FeedVersion.UPCOMING, "feeds/3/bbb.zip",
+                java.time.LocalDate.of(2027, 3, 31));
+        upcoming.setSha256("bbb");
+        upcoming.setStartsOn(java.time.LocalDate.of(2026, 11, 1));
+        FeedVersion onlyCurrent = TestEntities.current(withCurrentOnly, "feeds/4/ccc.zip", null);
+        onlyCurrent.setSha256("ccc");
+        when(repo.findAll(Sort.by("id"))).thenReturn(List.of(withBoth, withCurrentOnly));
+        when(versions.findCurrentByFeedId()).thenReturn(java.util.Map.of(3L, current, 4L, onlyCurrent));
+        when(versions.findUpcomingByFeedId()).thenReturn(java.util.Map.of(3L, upcoming));
+
+        mvc.perform(get("/api/feeds"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].current.sha256").value("aaa"))
+                .andExpect(jsonPath("$[0].current.startsOn").value("2026-09-01"))
+                .andExpect(jsonPath("$[0].current.expiresOn").value("2026-12-31"))
+                .andExpect(jsonPath("$[0].current.downloadedAt").exists())
+                .andExpect(jsonPath("$[0].current.filePath").doesNotExist())
+                .andExpect(jsonPath("$[0].upcoming.sha256").value("bbb"))
+                .andExpect(jsonPath("$[0].upcoming.startsOn").value("2026-11-01"))
+                .andExpect(jsonPath("$[1].current.sha256").value("ccc"))
+                .andExpect(jsonPath("$[1].upcoming").value(org.hamcrest.Matchers.nullValue()));
+
+        // the maps are loaded once for the whole list, not per feed
+        verify(versions, times(1)).findCurrentByFeedId();
+        verify(versions, times(1)).findUpcomingByFeedId();
+        verify(versions, never()).findByFeedIdAndStatus(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void currentFileHasTheShaAsETagAndAMatchingIfNoneMatchGives304WithoutBody() throws Exception {
+        versionFile(5L, FeedVersion.CURRENT, "abc123");
+
+        mvc.perform(get("/api/feeds/5/file"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.ETAG, "\"abc123\""))
+                .andExpect(content().string("current bytes"));
+
+        mvc.perform(get("/api/feeds/5/file").header(HttpHeaders.IF_NONE_MATCH, "\"abc123\""))
+                .andExpect(status().isNotModified())
+                .andExpect(header().string(HttpHeaders.ETAG, "\"abc123\""))
+                .andExpect(content().string(""));
+    }
+
+    @Test
+    void anOtherETagGetsTheWholeFile() throws Exception {
+        versionFile(5L, FeedVersion.CURRENT, "abc123");
+
+        mvc.perform(get("/api/feeds/5/file").header(HttpHeaders.IF_NONE_MATCH, "\"old-sha\""))
+                .andExpect(status().isOk())
+                .andExpect(content().string("current bytes"));
+    }
+
+    @Test
+    void upcomingFileIsServedWithItsOwnNameAndETagAnd304() throws Exception {
+        versionFile(6L, FeedVersion.UPCOMING, "def456");
+
+        mvc.perform(get("/api/feeds/6/file/upcoming"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/zip"))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"6-upcoming.zip\""))
+                .andExpect(header().string(HttpHeaders.ETAG, "\"def456\""))
+                .andExpect(content().string("upcoming bytes"));
+
+        mvc.perform(get("/api/feeds/6/file/upcoming").header(HttpHeaders.IF_NONE_MATCH, "\"def456\""))
+                .andExpect(status().isNotModified())
+                .andExpect(content().string(""));
+    }
+
+    @Test
+    void upcomingFileReturns404WhenThereIsNone() throws Exception {
+        when(repo.findById(1L)).thenReturn(Optional.of(feed(1L)));
+        when(versions.findByFeedIdAndStatus(1L, FeedVersion.UPCOMING)).thenReturn(Optional.empty());
+
+        mvc.perform(get("/api/feeds/1/file/upcoming"))
+                .andExpect(status().isNotFound())
+                .andExpect(header().doesNotExist(HttpHeaders.CONTENT_DISPOSITION))
+                .andExpect(header().doesNotExist(HttpHeaders.ETAG));
+    }
+
+    @Test
+    void upcomingFileOutsideFeedsDirReturns404() throws Exception {
+        Feed feed = feed(1L);
+        when(repo.findById(1L)).thenReturn(Optional.of(feed));
+        when(versions.findByFeedIdAndStatus(1L, FeedVersion.UPCOMING))
+                .thenReturn(Optional.of(TestEntities.version(1, feed, FeedVersion.UPCOMING, "feeds/1/../../pom.xml", null)));
+
+        mvc.perform(get("/api/feeds/1/file/upcoming"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().string(""));
+    }
+
+    @Test
+    void currentFileStillServesTheCurrentWhenThereIsAlsoAnUpcoming() throws Exception {
+        versionFile(7L, FeedVersion.CURRENT, "cur");
+
+        mvc.perform(get("/api/feeds/7/file"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("current bytes"));
+        verify(versions, never()).findByFeedIdAndStatus(7L, FeedVersion.UPCOMING);
     }
 }

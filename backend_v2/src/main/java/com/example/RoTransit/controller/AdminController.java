@@ -11,6 +11,7 @@ import com.example.RoTransit.repository.FeedVersionRepository;
 import com.example.RoTransit.service.DownloadResult;
 import com.example.RoTransit.service.FeedService;
 import com.example.RoTransit.service.FeedUpdateJob;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,11 +20,13 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
@@ -37,23 +40,28 @@ public class AdminController {
     private final FeedVersionRepository versions;
     private final FeedService feedService;
     private final FeedUpdateJob feedUpdateJob;
+    private final Clock clock;
 
     public AdminController(FeedRepository feeds, FeedSourceRepository sources, FeedVersionRepository versions,
-                           FeedService feedService, FeedUpdateJob feedUpdateJob) {
+                           FeedService feedService, FeedUpdateJob feedUpdateJob, Clock clock) {
         this.feeds = feeds;
         this.sources = sources;
         this.versions = versions;
         this.feedService = feedService;
         this.feedUpdateJob = feedUpdateJob;
+        this.clock = clock;
     }
 
     @GetMapping("/feeds")
     public List<FeedStatus> feeds(){
-        // three queries in total (feeds, current versions, latest attempts), not one per feed
+        // four queries in total (feeds, current, latest, upcoming), not one per feed
         Map<Long, FeedVersion> current = versions.findCurrentByFeedId();
         Map<Long, FeedVersion> latest = versions.findLatestByFeedId();
+        Map<Long, FeedVersion> upcoming = versions.findUpcomingByFeedId();
+        LocalDate today = LocalDate.now(clock);
         return feeds.findAll().stream()
-                .map(feed -> FeedStatus.from(feed, current.get(feed.getId()), latest.get(feed.getId())))
+                .map(feed -> FeedStatus.from(feed, current.get(feed.getId()), latest.get(feed.getId()),
+                        upcoming.get(feed.getId()), today))
                 .sorted(Comparator.comparing(FeedStatus::expiresOn,
                         Comparator.nullsFirst(Comparator.naturalOrder()))
                         .thenComparing(FeedStatus::id))
@@ -75,6 +83,15 @@ public class AdminController {
     public FeedDetails downloadFeedById(@PathVariable Long id) throws IOException, InterruptedException {
         DownloadResult result = feedService.download(id);
         return details(result.version().getFeed()).withUnchanged(result.unchanged());
+    }
+
+    /** Manual override: switch to the upcoming version now instead of waiting for its start date. */
+    @PostMapping("/feeds/{id}/promote")
+    public FeedDetails promoteFeedById(@PathVariable Long id) {
+        Feed feed = feeds.findById(id).orElseThrow(); // unknown id -> 404 "Feed not found"
+        feedService.promoteUpcoming(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "feed has no upcoming version"));
+        return details(feed);
     }
 
     @GetMapping("/feeds/{id}/expires")
@@ -100,6 +117,7 @@ public class AdminController {
         return FeedDetails.from(feed,
                 sources.findByFeedIdAndPriority(feed.getId(), 1).orElse(null),
                 versions.findByFeedIdAndStatus(feed.getId(), FeedVersion.CURRENT).orElse(null),
-                versions.findFirstByFeedIdOrderByIdDesc(feed.getId()).orElse(null));
+                versions.findFirstByFeedIdOrderByIdDesc(feed.getId()).orElse(null),
+                versions.findByFeedIdAndStatus(feed.getId(), FeedVersion.UPCOMING).orElse(null));
     }
 }
