@@ -31,6 +31,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -53,6 +54,10 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipException;
@@ -79,6 +84,17 @@ public class FeedService {
     private final FeedVersionRepository versions;
     private final FeedVersionService versionService;
     private final Clock clock;
+    /** How long we wait for the source to start answering (until the response headers arrive). */
+    static final Duration REQUEST_TIMEOUT = Duration.ofMinutes(5);
+    /**
+     * How long a whole download may take, body included. The request timeout stops counting once the headers
+     * arrive, so a source that stalls in the middle of the body would otherwise block the job thread forever.
+     */
+    static final Duration DOWNLOAD_DEADLINE = Duration.ofMinutes(15);
+    // not final so tests can shorten them
+    Duration requestTimeout = REQUEST_TIMEOUT;
+    Duration downloadDeadline = DOWNLOAD_DEADLINE;
+
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .followRedirects(HttpClient.Redirect.NORMAL)
@@ -143,9 +159,9 @@ public class FeedService {
             String sourceUrl = source.downloadUrl();
             Files.createDirectories(FEEDS_ROOT);
 
-            HttpRequest request = HttpRequest.newBuilder(URI.create(sourceUrl)).GET().build();
+            HttpRequest request = HttpRequest.newBuilder(URI.create(sourceUrl)).timeout(requestTimeout).GET().build();
             temp = Files.createFile(FEEDS_ROOT.resolve(id + "-" + UUID.randomUUID() + ".zip.part"));
-            HttpResponse<Path> response = client.send(request, HttpResponse.BodyHandlers.ofFile(temp));
+            HttpResponse<Path> response = sendWithDeadline(request, temp);
 
             if (response.statusCode() != 200) {
                 throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
@@ -230,6 +246,37 @@ public class FeedService {
         }
         deleteOldFiles(id);
         return new DownloadResult(saved, false);
+    }
+
+    /**
+     * client.send(), but giving up after downloadDeadline. send() would wait as long as the body keeps the
+     * connection open; get(timeout) on the async version doesn't. Every failure is an IOException (a timeout is an
+     * HttpTimeoutException) or an InterruptedException, so download() records it as a failed attempt as before.
+     */
+    private HttpResponse<Path> sendWithDeadline(HttpRequest request, Path temp)
+            throws IOException, InterruptedException {
+        CompletableFuture<HttpResponse<Path>> future = client.sendAsync(request, HttpResponse.BodyHandlers.ofFile(temp));
+        try {
+            return future.get(downloadDeadline.toMillis(), TimeUnit.MILLISECONDS);
+        }
+        catch (TimeoutException e) {
+            future.cancel(true); // asks the client to abort the exchange
+            throw new HttpTimeoutException("download did not finish within " + downloadDeadline + ": " + request.uri());
+        }
+        catch (InterruptedException e) {
+            future.cancel(true);
+            throw e;
+        }
+        catch (ExecutionException e) {
+            // unwrap, so callers see the same exceptions send() would throw
+            if (e.getCause() instanceof IOException io) {
+                throw io;
+            }
+            if (e.getCause() instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            throw new IOException(e.getCause());
+        }
     }
 
     /** Remembers when the source last sent this file again, so the nightly job can skip it for a day. */

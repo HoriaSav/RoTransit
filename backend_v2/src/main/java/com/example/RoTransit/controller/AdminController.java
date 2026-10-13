@@ -11,6 +11,8 @@ import com.example.RoTransit.repository.FeedVersionRepository;
 import com.example.RoTransit.service.DownloadResult;
 import com.example.RoTransit.service.FeedService;
 import com.example.RoTransit.service.FeedUpdateJob;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -24,7 +26,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -35,6 +37,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/admin")
 public class AdminController {
+    private static final Logger log = LoggerFactory.getLogger(AdminController.class);
     private final FeedRepository feeds;
     private final FeedSourceRepository sources;
     private final FeedVersionRepository versions;
@@ -102,14 +105,23 @@ public class AdminController {
     // out.flush() only reaches the client because spring.properties sets spring.http.response.flush.enabled=true
     @PostMapping("/feeds/update")
     public ResponseEntity<StreamingResponseBody> updateFeedsNow() {
-        StreamingResponseBody body = out -> feedUpdateJob.updateFeeds(line -> {
-            try {
-                out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
-                out.flush();
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
-        });
+        StreamingResponseBody body = out -> {
+            // if the client disconnects (closed curl, timeout), writing fails: stop writing but let the run finish,
+            // so the remaining feeds still get updated. The results are in the log either way.
+            AtomicBoolean clientGone = new AtomicBoolean();
+            feedUpdateJob.updateFeeds(line -> {
+                if (clientGone.get()) {
+                    return;
+                }
+                try {
+                    out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                } catch (IOException e) {
+                    clientGone.set(true);
+                    log.info("Client left during the feed update, continuing without it ({})", e.getMessage());
+                }
+            });
+        };
         return ResponseEntity.ok().contentType(MediaType.TEXT_PLAIN).body(body);
     }
 

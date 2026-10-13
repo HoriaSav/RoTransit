@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.function.Consumer;
@@ -40,7 +41,8 @@ public class FeedUpdateJob {
         this.clock = clock;
     }
 
-    @Scheduled(cron = "0 0 4 * * *")
+    // 04:00 Romanian time, whatever zone the server runs in (same zone as the Clock)
+    @Scheduled(cron = "0 0 4 * * *", zone = "Europe/Bucharest")
     public void updateFeedsScheduled() {
         updateFeeds(line -> {});
     }
@@ -91,7 +93,24 @@ public class FeedUpdateJob {
     static final Duration RECHECK_AFTER = Duration.ofHours(24);
     private static final DateTimeFormatter CHECKED_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
+    /** True while a run is going, so the 04:00 run and the admin button never download the same feeds twice at once. */
+    private final AtomicBoolean running = new AtomicBoolean();
+
     public void updateFeeds(Consumer<String> onResult) {
+        if (!running.compareAndSet(false, true)) {
+            log.info("Feed update requested while one is already running, skipped");
+            onResult.accept("An update is already running, try again later");
+            return;
+        }
+        try {
+            runUpdate(onResult);
+        }
+        finally {
+            running.set(false);
+        }
+    }
+
+    private void runUpdate(Consumer<String> onResult) {
         feedService.sweepOrphanFiles(); // never throws, only logs
         List<Feed> allFeeds = feeds.findAll();
         // switch first, so the download decisions below already see the promoted versions

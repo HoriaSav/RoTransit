@@ -599,4 +599,54 @@ class FeedUpdateJobTest {
 
         verify(service).download(1L);
     }
+
+    // ---- schedule zone and one run at a time ----
+
+    @Test
+    void theNightlyRunIsAt4InBucharestTime() throws Exception {
+        org.springframework.scheduling.annotation.Scheduled scheduled = FeedUpdateJob.class
+                .getMethod("updateFeedsScheduled").getAnnotation(org.springframework.scheduling.annotation.Scheduled.class);
+
+        assertThat(scheduled.cron()).isEqualTo("0 0 4 * * *");
+        assertThat(scheduled.zone()).isEqualTo("Europe/Bucharest");
+    }
+
+    @Test
+    void everyScheduledMethodNamesItsZone() {
+        // a cron without a zone runs in the server's zone; guard against adding one later
+        for (java.lang.reflect.Method m : FeedUpdateJob.class.getDeclaredMethods()) {
+            org.springframework.scheduling.annotation.Scheduled s =
+                    m.getAnnotation(org.springframework.scheduling.annotation.Scheduled.class);
+            if (s != null && !s.cron().isEmpty()) {
+                assertThat(s.zone()).as(m.getName()).isEqualTo("Europe/Bucharest");
+            }
+        }
+    }
+
+    @Test
+    void aSecondRunWhileOneIsGoingIsRefusedAndTheFirstFinishes() throws Exception {
+        Feed feed = feed(1, "Brasov", null, TODAY.plusYears(1)); // missing file: needs a download
+        List<String> secondRun = new ArrayList<>();
+        when(service.download(1L)).thenAnswer(inv -> {
+            job.updateFeeds(secondRun::add); // someone presses "update" while the first run is downloading
+            return new DownloadResult(currentVersions.get(1L), false);
+        });
+
+        List<String> firstRun = run(feed);
+
+        assertThat(secondRun).containsExactly("An update is already running, try again later");
+        assertThat(firstRun).containsExactly("Brasov has been updated!");
+        verify(service, times(1)).download(1L);
+    }
+
+    @Test
+    void afterARunEvenAFailedOneTheNextRunStartsNormally() throws Exception {
+        when(repo.findAll()).thenThrow(new IllegalStateException("db down")).thenReturn(List.of());
+
+        assertThatThrownBy(() -> job.updateFeeds(line -> {})).isInstanceOf(IllegalStateException.class);
+        List<String> lines = new ArrayList<>();
+        job.updateFeeds(lines::add);
+
+        assertThat(lines).as("not refused as 'already running'").isEmpty();
+    }
 }

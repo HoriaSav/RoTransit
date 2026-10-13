@@ -203,6 +203,25 @@ class FeedServiceDownloadTest {
                     out.flush();
                     throw new IOException("fake server drops the connection mid-body");
                 }
+                case "/mdb-stall/latest.zip" -> {
+                    // headers and a bit of body, then silence: only the overall download deadline can stop this
+                    exchange.sendResponseHeaders(200, 100_000);
+                    OutputStream out = exchange.getResponseBody();
+                    out.write(java.util.Arrays.copyOf(DATED_ZIP, 1000));
+                    out.flush();
+                    sleepQuietly(2_000);
+                    exchange.close();
+                }
+                case "/mdb-slowheaders/latest.zip" -> {
+                    // no answer at all for a while: the request timeout covers this part
+                    sleepQuietly(2_000);
+                    exchange.sendResponseHeaders(200, DATED_ZIP.length);
+                    try (OutputStream out = exchange.getResponseBody()) {
+                        out.write(DATED_ZIP);
+                    } catch (IOException ignored) {
+                        // the client gave up already
+                    }
+                }
                 case "/mdb-agency/latest.zip" -> {
                     exchange.sendResponseHeaders(200, AGENCY_ZIP.length);
                     try (OutputStream out = exchange.getResponseBody()) {
@@ -731,7 +750,7 @@ class FeedServiceDownloadTest {
         Path existing = previouslyDownloaded(990011L, "mdb-ok");
         HttpClient client = mock(HttpClient.class);
         IOException boom = new IOException("connection reset");
-        when(client.send(any(), any())).thenThrow(boom);
+        when(client.sendAsync(any(), any())).thenReturn(java.util.concurrent.CompletableFuture.failedFuture(boom));
         ReflectionTestUtils.setField(service, "client", client);
 
         Object[] r = downloadAndTakeInterruptFlag(990011L);
@@ -744,18 +763,21 @@ class FeedServiceDownloadTest {
     }
 
     @Test
-    void interruptedExceptionFromTheHttpClientStoresFailedRethrowsTheSameInstanceAndRestoresTheFlag() throws Exception {
+    void interruptedExceptionWhileWaitingStoresFailedRethrowsAndRestoresTheFlag() throws Exception {
         Path existing = previouslyDownloaded(990012L, "mdb-ok");
         HttpClient client = mock(HttpClient.class);
-        InterruptedException interrupted = new InterruptedException("stop");
-        when(client.send(any(), any())).thenThrow(interrupted);
+        // the download waits on the async future; an interrupt while waiting throws InterruptedException
+        when(client.sendAsync(any(), any())).thenAnswer(inv -> {
+            Thread.currentThread().interrupt();
+            return new java.util.concurrent.CompletableFuture<>();
+        });
         ReflectionTestUtils.setField(service, "client", client);
 
         Object[] r = downloadAndTakeInterruptFlag(990012L);
         Throwable thrown = (Throwable) r[0];
 
         assertThat((boolean) r[1]).as("interrupt flag restored after the throw").isTrue();
-        assertThat(thrown).isSameAs(interrupted);
+        assertThat(thrown).isInstanceOf(InterruptedException.class);
         assertFailedAndCurrentUntouched(990012L, existing);
     }
 
@@ -777,8 +799,11 @@ class FeedServiceDownloadTest {
     void failedSaveRunsWithTheFlagClearAndTheFlagIsRestoredOnlyAfterIt() throws Exception {
         Path existing = previouslyDownloaded(990014L, "mdb-ok");
         HttpClient client = mock(HttpClient.class);
-        InterruptedException interrupted = new InterruptedException("stop");
-        when(client.send(any(), any())).thenThrow(interrupted);
+        // the download waits on the async future; an interrupt while waiting throws InterruptedException
+        when(client.sendAsync(any(), any())).thenAnswer(inv -> {
+            Thread.currentThread().interrupt();
+            return new java.util.concurrent.CompletableFuture<>();
+        });
         ReflectionTestUtils.setField(service, "client", client);
         List<Boolean> flagDuringSave = new CopyOnWriteArrayList<>();
         when(versions.save(any(FeedVersion.class))).thenAnswer(inv -> {
@@ -791,7 +816,7 @@ class FeedServiceDownloadTest {
         // the save talks to the database, so it must not run with the flag set (a set flag can abort a blocking pool wait)
         assertThat(flagDuringSave).containsExactly(false);
         assertThat((boolean) r[1]).isTrue();
-        assertThat(r[0]).isSameAs(interrupted);
+        assertThat(r[0]).isInstanceOf(InterruptedException.class);
         assertFailedAndCurrentUntouched(990014L, existing);
     }
 
@@ -932,6 +957,60 @@ class FeedServiceDownloadTest {
         assertThat(fileOf(990035L, AGENCY_ZIP)).doesNotExist();
         assertThat(currentFile).exists();
         assertThat(partFiles(990035L)).isEmpty();
+    }
+
+    // ---- timeouts: a stuck source must become a failed attempt, never a hung job thread ----
+
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    @Test
+    void everyRequestHasTheRequestTimeout() throws Exception {
+        feed(990038L, "mdb-ok");
+        HttpClient client = mock(HttpClient.class);
+        ArgumentCaptor<java.net.http.HttpRequest> request = ArgumentCaptor.forClass(java.net.http.HttpRequest.class);
+        when(client.sendAsync(request.capture(), any()))
+                .thenReturn(java.util.concurrent.CompletableFuture.failedFuture(new IOException("stop here")));
+        ReflectionTestUtils.setField(service, "client", client);
+
+        catchThrowable(() -> service.download(990038L));
+
+        assertThat(request.getValue().timeout()).contains(FeedService.REQUEST_TIMEOUT);
+        assertThat(FeedService.REQUEST_TIMEOUT).isEqualTo(java.time.Duration.ofMinutes(5));
+    }
+
+    @Test
+    void aSourceThatNeverSendsHeadersTimesOutAndIsStoredAsFailed() throws Exception {
+        Path existing = previouslyDownloaded(990039L, "mdb-slowheaders");
+        service.requestTimeout = java.time.Duration.ofMillis(300);
+
+        Throwable thrown = catchThrowable(() -> service.download(990039L));
+
+        assertThat(thrown).isInstanceOf(java.net.http.HttpTimeoutException.class);
+        assertFailedAndCurrentUntouched(990039L, existing);
+        assertThat(partFiles(990039L)).isEmpty();
+    }
+
+    @Test
+    void aBodyThatStallsHitsTheDownloadDeadlineAndIsStoredAsFailed() throws Exception {
+        Path existing = previouslyDownloaded(990040L, "mdb-stall");
+        service.downloadDeadline = java.time.Duration.ofMillis(500);
+        long start = System.nanoTime();
+
+        Throwable thrown = catchThrowable(() -> service.download(990040L));
+
+        long tookMs = (System.nanoTime() - start) / 1_000_000;
+        assertThat(thrown).isInstanceOf(java.net.http.HttpTimeoutException.class)
+                .isInstanceOf(IOException.class) // so download()'s normal failure path handles it
+                .hasMessageContaining("did not finish");
+        assertThat(tookMs).as("gave up at the deadline, not when the server stopped stalling").isLessThan(1_800);
+        assertFailedAndCurrentUntouched(990040L, existing);
+        assertThat(partFiles(990040L)).isEmpty();
     }
 
     private static byte[] zip(String... nameContentPairs) {

@@ -441,4 +441,48 @@ class AdminControllerTest {
                 .hasRootCauseInstanceOf(NoSuchElementException.class);
         verify(feedService, never()).promoteUpcoming(anyLong());
     }
+
+    // ---- long update stream ----
+
+    @Test
+    void theAsyncTimeoutIsLongEnoughForTheUpdateStream() throws Exception {
+        java.util.Properties properties = new java.util.Properties();
+        try (var in = getClass().getResourceAsStream("/application.properties")) {
+            properties.load(in);
+        }
+
+        assertThat(properties.getProperty("spring.mvc.async.request-timeout")).isEqualTo("30m");
+    }
+
+    @Test
+    void whenTheClientDisconnectsTheUpdateStillRunsForEveryFeed() throws Exception {
+        // a real job with mocked repositories: three feeds that all need a download
+        FeedRepository jobFeeds = mock(FeedRepository.class);
+        FeedVersionRepository jobVersions = mock(FeedVersionRepository.class);
+        FeedService jobService = mock(FeedService.class);
+        List<Feed> three = List.of(TestEntities.feed(1, "A", "ACo"), TestEntities.feed(2, "B", "BCo"),
+                TestEntities.feed(3, "C", "CCo"));
+        when(jobFeeds.findAll()).thenReturn(three);
+        when(jobService.download(anyLong())).thenAnswer(inv -> new DownloadResult(
+                TestEntities.current(three.get(0), "feeds/x.zip", null), false));
+        FeedUpdateJob realJob = new FeedUpdateJob(jobFeeds, jobVersions, jobService, TestEntities.CLOCK);
+        AdminController controller = new AdminController(repo, sources, versions, feedService, realJob,
+                TestEntities.CLOCK);
+        // the client is gone: every write fails, like a closed socket
+        java.util.concurrent.atomic.AtomicInteger writes = new java.util.concurrent.atomic.AtomicInteger();
+        java.io.OutputStream closedSocket = new java.io.OutputStream() {
+            @Override
+            public void write(int b) throws java.io.IOException {
+                writes.incrementAndGet();
+                throw new java.io.IOException("Broken pipe");
+            }
+        };
+
+        controller.updateFeedsNow().getBody().writeTo(closedSocket);
+
+        verify(jobService).download(1L);
+        verify(jobService).download(2L);
+        verify(jobService).download(3L);
+        assertThat(writes.get()).as("stops writing after the first failure").isEqualTo(1);
+    }
 }
