@@ -18,7 +18,11 @@ class UserLocationState {
   final bool isResolving;
   final bool resolveFinished;
 
-  bool get hasFix => lat != null && lon != null;
+  bool get hasFix {
+    final la = lat;
+    final lo = lon;
+    return la != null && lo != null && isUsableLatLon(la, lo);
+  }
 
   UserLocationState copyWith({
     double? lat,
@@ -41,13 +45,34 @@ class UserLocationState {
 class UserLocationNotifier extends StateNotifier<UserLocationState> {
   UserLocationNotifier() : super(const UserLocationState());
 
-  Future<UserLocationState> resolve({bool forceFresh = false}) async {
+  Future<UserLocationState>? _inFlight;
+
+  /// One GPS/permission attempt at a time (the map's "center on me" tap);
+  /// overlapping [Geolocator] requests can crash.
+  Future<UserLocationState> resolve({bool forceFresh = false}) {
+    return _inFlight ??= _doResolve(forceFresh: forceFresh).whenComplete(() {
+      _inFlight = null;
+    });
+  }
+
+  Future<UserLocationState> _doResolve({required bool forceFresh}) async {
+    final previous = state;
     state = state.copyWith(isResolving: true, resolveFinished: false);
     final fix = await tryGetCurrentUserLatLon(forceFresh: forceFresh);
+    if (fix == null) {
+      state = UserLocationState(
+        lat: previous.lat,
+        lon: previous.lon,
+        accuracyM: previous.accuracyM,
+        isResolving: false,
+        resolveFinished: true,
+      );
+      return state;
+    }
     state = UserLocationState(
-      lat: fix?.lat,
-      lon: fix?.lon,
-      accuracyM: fix?.accuracyM,
+      lat: fix.lat,
+      lon: fix.lon,
+      accuracyM: fix.accuracyM,
       isResolving: false,
       resolveFinished: true,
     );

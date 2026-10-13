@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:rotransit_frontend/l10n/app_localizations.dart';
+import 'package:rotransit/l10n/app_localizations.dart';
 
 import '../../core/theme/app_extra_colors.dart';
 import 'shell_layout.dart';
@@ -12,7 +12,7 @@ class ShellBrandingHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final extra = context.extraColors;
-    final l10n = AppLocalizations.of(context)!;
+    final l10n = AppLocalizations.of(context);
 
     return SafeArea(
       bottom: false,

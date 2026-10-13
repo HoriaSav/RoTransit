@@ -1,9 +1,0 @@
-{
-  "routingDefaults": {
-    "walkSpeed": 1.33,
-    "numItineraries": 6,
-    "maxWalkDistance": 1000,
-    "walkReluctance": 5,
-    "waitReluctance": 0.85
-  }
-}

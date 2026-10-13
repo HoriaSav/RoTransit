@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:rotransit_frontend/l10n/app_localizations.dart';
+import 'package:rotransit/l10n/app_localizations.dart';
 
 import '../map/presentation/map_tab.dart';
 import '../saved/presentation/bus_tab.dart';
 import '../saved/presentation/favorites_tab.dart';
-import '../search/presentation/search_tab.dart';
+import '../map/presentation/map_companion_tab.dart';
 import '../settings/presentation/settings_tab.dart';
 import 'shell_floating_nav.dart';
 import 'shell_header.dart';
@@ -44,7 +44,7 @@ class _MainShellState extends ConsumerState<MainShell> {
     }
 
     _lastBackPressForExit = now;
-    final message = AppLocalizations.of(context)!.pressBackAgainToExit;
+    final message = AppLocalizations.of(context).pressBackAgainToExit;
     final messenger = ScaffoldMessenger.of(context);
     messenger.clearSnackBars();
     showAppSnackBar(
@@ -71,16 +71,18 @@ class _MainShellState extends ConsumerState<MainShell> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (selectedTab != busTabIndex) const ShellBrandingHeader(),
+          if (selectedTab != busTabIndex && selectedTab != 0 &&
+              !ref.watch(settingsOpenProvider))
+            const ShellBrandingHeader(),
           const Expanded(
             child: Stack(
               clipBehavior: Clip.hardEdge,
               fit: StackFit.expand,
               children: [
                 _ShellMapLayer(),
-                _SearchGradientOverlay(),
                 _ShellTabPages(),
                 _ShellFloatingNavBarSlot(),
+                _SettingsOverlay(),
               ],
             ),
           ),
@@ -101,45 +103,11 @@ class _ShellMapLayer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final index = ref.watch(selectedTabProvider);
-    final mapOverlayVisible = ref.watch(mapShellOverlayVisibleProvider);
-    final mapSurfaceActive = index == 0 || mapOverlayVisible;
 
     return Positioned.fill(
       child: TickerMode(
-        enabled: mapSurfaceActive,
+        enabled: index == 0,
         child: const MapTab(),
-      ),
-    );
-  }
-}
-
-class _SearchGradientOverlay extends ConsumerWidget {
-  const _SearchGradientOverlay();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final index = ref.watch(selectedTabProvider);
-    final mapOverlayVisible = ref.watch(mapShellOverlayVisibleProvider);
-    if (index != 0 || mapOverlayVisible) {
-      return const SizedBox.shrink();
-    }
-    final extra = context.extraColors;
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                extra.searchGradientTop,
-                extra.searchGradientMid,
-                extra.searchGradientBottom,
-              ],
-              stops: const [0.0, 0.38, 1.0],
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -151,24 +119,11 @@ class _ShellTabPages extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final index = ref.watch(selectedTabProvider);
-    final mapOverlayVisible = ref.watch(mapShellOverlayVisibleProvider);
-    final pages = [
-      IgnorePointer(
-        ignoring: mapOverlayVisible,
-        child: Opacity(
-          opacity: mapOverlayVisible ? 0 : 1,
-          child: const SearchTab(),
-        ),
-      ),
-      const BusTab(),
-      IgnorePointer(
-        ignoring: mapOverlayVisible,
-        child: Opacity(
-          opacity: mapOverlayVisible ? 0 : 1,
-          child: const FavoritesTab(),
-        ),
-      ),
-      const SettingsTab(),
+    const pages = [
+      // Map companion chrome (search stations). Map stays interactive underneath.
+      MapCompanionTab(),
+      BusTab(),
+      FavoritesTab(),
     ];
 
     return Positioned.fill(
@@ -183,6 +138,8 @@ class _ShellFloatingNavBarSlot extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final index = ref.watch(selectedTabProvider);
+    final settingsOpen = ref.watch(settingsOpenProvider);
+    if (settingsOpen) return const SizedBox.shrink();
 
     return Positioned(
       left: kShellFloatingNavHorizontalMargin,
@@ -191,23 +148,26 @@ class _ShellFloatingNavBarSlot extends ConsumerWidget {
       child: ShellFloatingNavBar(
         selectedIndex: index,
         onDestinationSelected: (value) {
-          final current = ref.read(selectedTabProvider);
-          if (value != 0) {
-            ref.read(showMapSheetProvider.notifier).state = false;
-            ref.read(mapSelectionTargetProvider.notifier).state = null;
-            ref.read(routeMapOverlaySuppressedProvider.notifier).state = true;
-          } else if (value == 0 && current != 0) {
-            ref.read(showMapSheetProvider.notifier).state = false;
-            ref.read(mapSelectionTargetProvider.notifier).state = null;
-            ref.read(routeMapOverlaySuppressedProvider.notifier).state = true;
-            if (ref.read(searchMapStateProvider).openedFromSavedFavorite) {
-              ref
-                  .read(searchMapStateProvider.notifier)
-                  .closeFavoriteMapPreview();
-            }
-          }
           ref.read(selectedTabProvider.notifier).state = value;
         },
+      ),
+    );
+  }
+}
+
+class _SettingsOverlay extends ConsumerWidget {
+  const _SettingsOverlay();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!ref.watch(settingsOpenProvider)) {
+      return const SizedBox.shrink();
+    }
+    final extra = context.extraColors;
+    return Positioned.fill(
+      child: Material(
+        color: extra.tabBackground,
+        child: const SettingsTab(showBackButton: true),
       ),
     );
   }

@@ -4,11 +4,11 @@
 .flutter-plugins-dependencies
 .packages
 build/
-pubspec.lock
-.metadata
 
 # IDE
 .idea/
+# Android Studio run configs (machine-specific API_BASE_URL)
+.run/
 .vscode/
 *.iml
 

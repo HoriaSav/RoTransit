@@ -1,0 +1,63 @@
+name: Backend CI
+
+on:
+  push:
+    paths: ['backend_v2/**', '.github/workflows/backend.yml']
+  pull_request:
+    paths: ['backend_v2/**', '.github/workflows/backend.yml']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend_v2
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: rotransit
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: ci-only-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U admin -d rotransit"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      SPRING_DATASOURCE_PASSWORD: ci-only-password
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - run: ./mvnw -B test
+
+      # JaCoCo writes target/site/jacoco during the test phase
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: jacoco-report
+          path: backend_v2/target/site/jacoco
+          if-no-files-found: warn
+
+      - name: Coverage summary
+        if: always() && hashFiles('backend_v2/target/site/jacoco/jacoco.csv') != ''
+        run: |
+          awk -F, '
+            function pct(c, m) { return (c + m) ? sprintf("%.1f%%", 100 * c / (c + m)) : "n/a" }
+            NR > 1 { im += $4; ic += $5; bm += $6; bc += $7; lm += $8; lc += $9 }
+            END {
+              print "### Test coverage (JaCoCo)"
+              print ""
+              print "| Metric | Covered | Total | Coverage |"
+              print "|---|---:|---:|---:|"
+              printf "| Lines | %d | %d | %s |\n", lc, lc + lm, pct(lc, lm)
+              printf "| Branches | %d | %d | %s |\n", bc, bc + bm, pct(bc, bm)
+              printf "| Instructions | %d | %d | %s |\n", ic, ic + im, pct(ic, im)
+            }' target/site/jacoco/jacoco.csv >> "$GITHUB_STEP_SUMMARY"

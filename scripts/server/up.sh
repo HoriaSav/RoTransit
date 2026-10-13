@@ -25,5 +25,5 @@ args=(compose up)
 if [[ "$DETACHED" -eq 1 ]]; then args+=(-d); fi
 if [[ "$BUILD" -eq 1 ]]; then args+=(--build); fi
 
-echo "Starting RoTransit stack..."
+echo "Starting RoTransit stack (db, backend_v2 app on :8080, cloudflared)..."
 docker "${args[@]}"

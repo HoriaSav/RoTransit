@@ -1,0 +1,28 @@
+name: Feed health
+
+on:
+  schedule:
+    - cron: '17 2 * * *'  # every night at 02:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      # writes the table to the run page and opens, updates or closes the feed-health issue
+      - run: python .github/scripts/feed_health.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:rotransit_frontend/src/features/routes/data/stop_suggestion_dedupe.dart';
-import 'package:rotransit_frontend/src/features/routes/domain/route_models.dart';
+import 'package:rotransit/src/features/routes/data/stop_suggestion_dedupe.dart';
+import 'package:rotransit/src/features/routes/domain/route_models.dart';
 
 void main() {
   test('dedupes accent and non-accent stop names when nearby', () {

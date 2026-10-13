@@ -1,0 +1,59 @@
+name: Frontend CI
+
+on:
+  push:
+    paths: ['frontend/**', '.github/workflows/frontend.yml']
+  pull_request:
+    paths: ['frontend/**', '.github/workflows/frontend.yml']
+
+permissions:
+  contents: read
+
+# a newer push to the same branch cancels the run that is still going
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v5
+      # 3.27.4: the app is built with Flutter 3.27 (see the path override in pubspec.yaml); newer Flutter
+      # versions pin a different path package and would break that override
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.27.4'
+          cache: true
+      # pubspec.lock is committed, so CI resolves the same versions as local builds
+      - run: flutter pub get --enforce-lockfile
+      - run: flutter analyze
+      # the stop board's day arithmetic must hold across Brasov's DST changes
+      - run: flutter test
+        env:
+          TZ: Europe/Bucharest
+
+  android-debug-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.27.4'
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - run: flutter build apk --debug

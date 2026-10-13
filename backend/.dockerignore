@@ -1,6 +1,0 @@
-target/
-.mvn/
-.idea/
-*.iml
-*.log
-.env

@@ -14,12 +14,6 @@ const double kShellFloatingNavBottomMargin = 12;
 /// Horizontal inset for the floating nav and the map route sheet (aligned).
 const double kShellFloatingNavHorizontalMargin = 16;
 
-/// Corner radius for the map route sheet (matches [ShellFloatingNavBar] pill).
-const double kMapRouteSheetCornerRadius = 24;
-
-/// Fixed fraction of the map stack slot used by the route list / details panel.
-const double kMapRouteSheetHeightFraction = 0.75;
-
 /// Bottom inset for the map sheet [Stack] slot: clears the nav plus [kShellFloatingNavBottomMargin] above it (same as nav↔home strip).
 double mapSheetStackBottomInset(BuildContext context) {
   return shellBottomContentPadding(context) + kShellFloatingNavBottomMargin;
