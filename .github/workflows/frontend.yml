@@ -22,7 +22,7 @@ jobs:
         working-directory: frontend
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # 3.27.4: the app is built with Flutter 3.27 (see the path override in pubspec.yaml); newer Flutter
       # versions pin a different path package and would break that override
       - uses: subosito/flutter-action@v2
@@ -45,7 +45,7 @@ jobs:
         working-directory: frontend
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
